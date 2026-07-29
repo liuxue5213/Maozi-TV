@@ -1,0 +1,39 @@
+version: "3.8"
+
+services:
+  tv-backend:
+    build: .
+    container_name: tv-live
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persistent data: SQLite DB and logs
+      - ./data:/data
+      # Mount local source code for development (hot-reload disabled by default)
+      # - ./backend:/app/backend
+      # - ./web-ui:/app/web-ui
+    environment:
+      - TV_HOST=0.0.0.0
+      - TV_PORT=8000
+      - TV_DB_PATH=/data/tv.db
+      - TV_LOG_FILE=/data/tv.log
+      - TV_LOG_LEVEL=INFO
+      # Crawl interval (minutes)
+      - TV_CRAWL_INTERVAL=60
+      # Health check interval (minutes)
+      - TV_CHECK_INTERVAL=15
+      # Source check timeout (seconds)
+      - TV_CHECK_TIMEOUT=10
+      # Max consecutive failures before switching source
+      - TV_MAX_FAILURES=3
+      # Max sources per channel
+      - TV_MAX_SOURCES_PER_CHANNEL=5
+      # Hide channel after N dead checks
+      - TV_HIDE_AFTER=6
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s

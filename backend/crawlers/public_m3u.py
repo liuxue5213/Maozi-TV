@@ -1,0 +1,141 @@
+"""Parser for m3u / m3u8 playlist format.
+
+Supports the extended m3u format with #EXTINF metadata (tvg-name, tvg-logo, group-title).
+"""
+
+import logging
+import re
+from typing import List
+
+from .base import ChannelEntry
+
+logger = logging.getLogger(__name__)
+
+# Pattern for EXTINF line: #EXTINF:-1 tvg-name="xxx" tvg-logo="xxx" group-title="xxx",Channel Name
+EXTINF_PATTERN = re.compile(
+    r'#EXTINF:[-.\d]+\s*'
+    r'(?:tvg-name="(?P<tvg_name>[^"]*)")?\s*'
+    r'(?:tvg-id="[^"]*")?\s*'
+    r'(?:tvg-logo="(?P<tvg_logo>[^"]*)")?\s*'
+    r'(?:group-title="(?P<group_title>[^"]*)")?\s*'
+    r'(?:channel-id="[^"]*")?\s*'
+    r'(?:,)?(?P<channel_name>[^,]*)$'
+)
+
+
+def parse_m3u(content: str, source: str = "") -> List[ChannelEntry]:
+    """Parse m3u/m3u8 content into a list of ChannelEntry.
+
+    Handles both extended (#EXTINF) and simple (one URL per line) m3u.
+    """
+    entries: List[ChannelEntry] = []
+    lines = content.splitlines()
+
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+
+        # Skip empty lines and headers
+        if not line or line.startswith("#EXTM3U"):
+            i += 1
+            continue
+
+        # Check if this is an EXTINF line
+        if line.startswith("#EXTINF"):
+            channel_name = ""
+            tvg_logo = ""
+            group_title = "未分类"
+
+            m = EXTINF_PATTERN.match(line)
+            if m:
+                channel_name = (m.group("tvg_name") or m.group("channel_name") or "").strip()
+                tvg_logo = (m.group("tvg_logo") or "").strip()
+                group_title = (m.group("group_title") or "未分类").strip()
+            else:
+                # Fallback: take everything after the last comma
+                if "," in line:
+                    channel_name = line.rsplit(",", 1)[-1].strip()
+
+            if not channel_name:
+                channel_name = f"未知频道_{len(entries) + 1}"
+
+            # Next non-empty line should be the URL
+            i += 1
+            while i < len(lines) and not lines[i].strip():
+                i += 1
+            if i < len(lines):
+                url = lines[i].strip()
+                if url and not url.startswith("#"):
+                    entries.append(ChannelEntry(
+                        name=channel_name,
+                        url=url,
+                        group=group_title,
+                        logo=tvg_logo,
+                        source=source,
+                    ))
+            i += 1
+
+        elif line.startswith("#"):
+            # Other comment/header lines - skip
+            i += 1
+
+        else:
+            # Bare URL line without EXTINF (simple m3u)
+            url = line
+            # Filter out URLs that are clearly not streamable
+            if url and url.startswith("http"):
+                # Try to infer a name from the URL
+                name = _infer_name_from_url(url)
+                entries.append(ChannelEntry(
+                    name=name,
+                    url=url,
+                    group="未分类",
+                    source=source,
+                ))
+            i += 1
+
+    # Deduplicate by URL (keep first occurrence)
+    seen_urls = set()
+    deduped = []
+    for entry in entries:
+        if entry.url not in seen_urls:
+            seen_urls.add(entry.url)
+            deduped.append(entry)
+        else:
+            logger.debug("Dropped duplicate URL: %s", entry.url)
+
+    logger.info("Parsed %d channels from m3u (after dedup: %d)", len(entries), len(deduped))
+    return deduped
+
+
+def _infer_name_from_url(url: str) -> str:
+    """Try to extract a human-readable channel name from a URL."""
+    # Try common patterns
+    patterns = [
+        r'/([^/]+)\.m3u8?$',
+        r'/([^/]+)/(?:index|playlist|stream|live)\.m3u8?',
+        r'/([^/]+)/(?:index|playlist|stream|live)',
+        r'/(?:live|stream|play)/([^/?#]+)',
+        r'channel[=/]([^/?#&]+)',
+    ]
+    for pat in patterns:
+        m = re.search(pat, url)
+        if m:
+            name = m.group(1)
+            # Clean up URL-encoded chars
+            from urllib.parse import unquote
+            name = unquote(name)
+            # Remove file extensions
+            name = re.sub(r'\.(m3u8?|ts|flv|mp4)$', '', name)
+            # Replace common separators
+            name = name.replace('_', ' ').replace('-', ' ')
+            name = name.strip()
+            if name and len(name) < 60:
+                return name
+
+    # Last resort: use domain as identifier
+    m = re.search(r'://([^/]+)', url)
+    if m:
+        return m.group(1)
+
+    return f"频道_{hash(url) % 10000}"
