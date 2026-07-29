@@ -59,44 +59,61 @@ jobs:
       - name: 签名 APK
         working-directory: ./android
         run: |
-          # Debug 签名（自动通过）
-          DEBUG_KEYSTORE="$HOME/.android/debug.keystore"
-          if [ ! -f "$DEBUG_KEYSTORE" ]; then
-            mkdir -p "$HOME/.android"
-            keytool -genkey -v -keystore "$DEBUG_KEYSTORE" \
-              -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
-              -storepass android -keypass android \
-              -dname "CN=Android Debug,O=Android,C=US" 2>/dev/null
+          # 检查未签名 APK 是否存在
+          UNSIGNED_APK="app/build/outputs/apk/release/app-release-unsigned.apk"
+          if [ ! -f "$UNSIGNED_APK" ]; then
+            echo "❌ 未找到未签名 APK: $UNSIGNED_APK"
+            ls -la app/build/outputs/apk/release/ || true
+            exit 1
           fi
-          # 复制并签名
-          cp app/build/outputs/apk/release/app-release-unsigned.apk \
-             app/build/outputs/apk/release/MaoziTV-unaligned.apk
-          # apksigner 签名
+
+          # 创建 debug keystore
+          DEBUG_KEYSTORE="$HOME/.android/debug.keystore"
+          mkdir -p "$HOME/.android"
+          keytool -genkey -v -keystore "$DEBUG_KEYSTORE" \
+            -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass android -keypass android \
+            -dname "CN=Android Debug,O=Android,C=US" 2>/dev/null || true
+
+          # 使用 apksigner 签名
           APKSIGNER="$ANDROID_HOME/build-tools/34.0.0/apksigner"
           if [ -f "$APKSIGNER" ]; then
+            echo "使用 apksigner 签名..."
             "$APKSIGNER" sign --ks "$DEBUG_KEYSTORE" \
+              --ks-key-alias androiddebugkey \
               --ks-pass pass:android --key-pass pass:android \
               --out app/build/outputs/apk/release/MaoziTV-signed.apk \
-              app/build/outputs/apk/release/MaoziTV-unaligned.apk
+              "$UNSIGNED_APK"
+            echo "✅ APK 签名成功"
           else
-            # fallback: 直接用未签名的（低版本 Android 也可安装）
-            cp app/build/outputs/apk/release/MaoziTV-unaligned.apk \
-               app/build/outputs/apk/release/MaoziTV-signed.apk
+            echo "⚠️ apksigner 未找到，使用 jarsigner 备用签名..."
+            jarsigner -verbose -keystore "$DEBUG_KEYSTORE" \
+              -storepass android -keypass android \
+              -signedjar app/build/outputs/apk/release/MaoziTV-signed.apk \
+              "$UNSIGNED_APK" androiddebugkey
+          fi
+
+          # 验证签名
+          if [ -f "$APKSIGNER" ]; then
+            "$APKSIGNER" verify app/build/outputs/apk/release/MaoziTV-signed.apk && echo "✅ 签名验证通过"
           fi
 
       - name: 对齐 APK (zipalign)
         working-directory: ./android
         run: |
           ZIPALIGN="$ANDROID_HOME/build-tools/34.0.0/zipalign"
+          SIGNED_APK="app/build/outputs/apk/release/MaoziTV-signed.apk"
+          FINAL_APK="app/build/outputs/apk/release/MaoziTV.apk"
+
           if [ -f "$ZIPALIGN" ]; then
-            "$ZIPALIGN" -f -v 4 \
-              app/build/outputs/apk/release/MaoziTV-signed.apk \
-              app/build/outputs/apk/release/MaoziTV.apk 2>&1 | tail -3
+            echo "使用 zipalign 对齐..."
+            "$ZIPALIGN" -f -v 4 "$SIGNED_APK" "$FINAL_APK" 2>&1 | tail -3
           else
-            cp app/build/outputs/apk/release/MaoziTV-signed.apk \
-               app/build/outputs/apk/release/MaoziTV.apk
+            cp "$SIGNED_APK" "$FINAL_APK"
           fi
-          ls -lh app/build/outputs/apk/release/MaoziTV.apk
+
+          echo "📦 最终 APK 信息:"
+          ls -lh "$FINAL_APK"
 
       - name: 上传 APK
         uses: actions/upload-artifact@v4
