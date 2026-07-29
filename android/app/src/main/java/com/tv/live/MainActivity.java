@@ -44,8 +44,8 @@ public class MainActivity extends AppCompatActivity {
 
     // ── Standalone 模式：JSON 源地址 ──────────────────────────
     private static final String[] JSON_URLS = {
-            "https://gitee.com/liuxue5213/maozi-tv/raw/master/channels.json",
-            "https://raw.githubusercontent.com/liuxue5213/Maozi-TV/gh-pages/channels.json",
+            "https://gitee.com/liuxue5213/maozi-tv/raw/main/channels.json",
+            "https://raw.githubusercontent.com/liuxue5213/Maozi-TV/main/channels.json",
     };
 
     // ── SharedPreferences 缓存 ───────────────────────────────
