@@ -189,9 +189,7 @@ def get_summary():
 
 
 @router.get("/export")
-def export_channel_data(
-    pretty: bool = Query(True, description="Pretty-print JSON"),
-):
+def export_channel_data():
     """Export all visible channels as a static JSON file (for standalone APK use)."""
     data = export_channels()
     return data

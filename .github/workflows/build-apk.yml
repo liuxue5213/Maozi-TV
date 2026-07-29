@@ -6,7 +6,7 @@ on:
     paths:
       - 'android/**'
       - '.github/workflows/build-apk.yml'
-  workflow_dispatch: # 手动触发
+  workflow_dispatch:
 
 jobs:
   build:
@@ -25,6 +25,12 @@ jobs:
       - name: 设置 Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: 安装 SDK 组件
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install \
+            "platforms;android-34" \
+            "build-tools;34.0.0" 2>&1 | tail -5
+
       - name: 缓存 Gradle
         uses: actions/cache@v4
         with:
@@ -35,48 +41,67 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      - name: 授予 Gradle 执行权限
-        run: chmod +x android/gradlew 2>/dev/null || true
-
       - name: 生成 Gradle Wrapper
         working-directory: ./android
         run: |
           if [ ! -f gradlew ]; then
-            apt-get update && apt-get install -y wget unzip
+            sudo apt-get update -qq && sudo apt-get install -y -qq wget unzip
             wget -q https://services.gradle.org/distributions/gradle-8.5-bin.zip -O /tmp/gradle.zip
             unzip -q /tmp/gradle.zip -d /tmp/gradle
             /tmp/gradle/gradle-8.5/bin/gradle wrapper --gradle-version=8.5
           fi
+          chmod +x gradlew
 
       - name: 编译 Release APK
         working-directory: ./android
         run: ./gradlew assembleRelease
 
-      - name: 签名 APK (debug key)
+      - name: 签名 APK
         working-directory: ./android
         run: |
-          # 用 debug 签名 (无密码签名，便于安装)
-          keytool -genkey -v -keystore debug.keystore -alias debug \
-            -keyalg RSA -keysize 2048 -validity 10000 \
-            -storepass android -keypass android \
-            -dname "CN=MaoziTV, OU=Dev, O=Maozi, L=Beijing, S=Beijing, C=CN" 2>/dev/null || true
-          # 签名
-          java -jar $ANDROID_HOME/build-tools/*/apksigner.jar sign \
-            --ks debug.keystore --ks-pass pass:android \
-            --key-pass pass:android \
-            app/build/outputs/apk/release/app-release-unsigned.apk 2>/dev/null || true
+          # Debug 签名（自动通过）
+          DEBUG_KEYSTORE="$HOME/.android/debug.keystore"
+          if [ ! -f "$DEBUG_KEYSTORE" ]; then
+            mkdir -p "$HOME/.android"
+            keytool -genkey -v -keystore "$DEBUG_KEYSTORE" \
+              -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass android -keypass android \
+              -dname "CN=Android Debug,O=Android,C=US" 2>/dev/null
+          fi
+          # 复制并签名
+          cp app/build/outputs/apk/release/app-release-unsigned.apk \
+             app/build/outputs/apk/release/MaoziTV-unaligned.apk
+          # apksigner 签名
+          APKSIGNER="$ANDROID_HOME/build-tools/34.0.0/apksigner"
+          if [ -f "$APKSIGNER" ]; then
+            "$APKSIGNER" sign --ks "$DEBUG_KEYSTORE" \
+              --ks-pass pass:android --key-pass pass:android \
+              --out app/build/outputs/apk/release/MaoziTV-signed.apk \
+              app/build/outputs/apk/release/MaoziTV-unaligned.apk
+          else
+            # fallback: 直接用未签名的（低版本 Android 也可安装）
+            cp app/build/outputs/apk/release/MaoziTV-unaligned.apk \
+               app/build/outputs/apk/release/MaoziTV-signed.apk
+          fi
 
       - name: 对齐 APK (zipalign)
         working-directory: ./android
         run: |
-          cp app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/MaoziTV.apk
-          $ANDROID_HOME/build-tools/*/zipalign -f 4 app/build/outputs/apk/release/MaoziTV.apk app/build/outputs/apk/release/MaoziTV-aligned.apk 2>/dev/null || true
-          mv app/build/outputs/apk/release/MaoziTV-aligned.apk app/build/outputs/apk/release/MaoziTV.apk 2>/dev/null || true
+          ZIPALIGN="$ANDROID_HOME/build-tools/34.0.0/zipalign"
+          if [ -f "$ZIPALIGN" ]; then
+            "$ZIPALIGN" -f -v 4 \
+              app/build/outputs/apk/release/MaoziTV-signed.apk \
+              app/build/outputs/apk/release/MaoziTV.apk 2>&1 | tail -3
+          else
+            cp app/build/outputs/apk/release/MaoziTV-signed.apk \
+               app/build/outputs/apk/release/MaoziTV.apk
+          fi
+          ls -lh app/build/outputs/apk/release/MaoziTV.apk
 
-      - name: 上传 APK 到 Artifacts
+      - name: 上传 APK
         uses: actions/upload-artifact@v4
         with:
           name: MaoziTV-APK
           path: android/app/build/outputs/apk/release/MaoziTV.apk
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 30

@@ -53,7 +53,7 @@ jobs:
           fi
 
       - name: 同步 channels.json 到 Gitee
-        if: ${{ secrets.GITEE_TOKEN != '' }}
+        if: env.GITEE_TOKEN != ''
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
         run: |

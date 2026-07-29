@@ -19,7 +19,6 @@ import android.widget.Toast;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 
-import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
@@ -210,10 +209,6 @@ public class MainActivity extends AppCompatActivity {
                     Log.i(TAG, "New version cached: v" + remoteVersion);
 
                     // 注入到 WebView (必须在主线程)
-                    final String escaped = jsonData.replace("\\", "\\\\")
-                            .replace("'", "\\'")
-                            .replace("\n", "\\n")
-                            .replace("\r", "\\r");
                     mainHandler.post(() -> {
                         webView.evaluateJavascript(
                                 "initFromJson(" + jsonData + ")", null);
