@@ -37,6 +37,8 @@ class Channel(Base):
     logo = Column(String(512), default="")
     # JSON list of source URLs, ordered by preference
     sources = Column(Text, default="[]")
+    # JSON list of dead source URLs (temporarily excluded from health checks)
+    dead_sources = Column(Text, default="[]")
     # Index of the currently active source in the sources list
     active_source_index = Column(Integer, default=0)
     # Whether the active source is currently healthy
@@ -63,6 +65,14 @@ class Channel(Base):
         current = self.active_source_index or 0
         if current >= len(sources):
             self.active_source_index = 0
+
+    def get_dead_sources(self) -> List[str]:
+        """Get the list of temporarily disabled sources."""
+        return json.loads(self.dead_sources) if self.dead_sources else []
+
+    def set_dead_sources(self, sources: List[str]) -> None:
+        """Set the list of temporarily disabled sources."""
+        self.dead_sources = json.dumps(sources)
 
     def get_active_source(self) -> Optional[str]:
         sources = self.get_sources()

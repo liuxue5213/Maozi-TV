@@ -411,6 +411,95 @@ html, body {
     }
 }
 
+/* ── Volume OSD (ArrowLeft / ArrowRight) ──────────────── */
+
+.volume-osd {
+    position: absolute;
+    top: 24px;
+    right: 24px;
+    background: rgba(0, 0, 0, 0.78);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 18px;
+    min-width: 220px;
+    opacity: 0;
+    transform: translateY(-8px);
+    transition: opacity 0.25s, transform 0.25s;
+    pointer-events: none;
+    z-index: 30;
+}
+
+.volume-osd.show {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.volume-osd .vol-label {
+    font-size: 14px;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+}
+
+.volume-osd .vol-bar {
+    width: 100%;
+    height: 8px;
+    background: var(--bg-primary);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.volume-osd .vol-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 4px;
+    transition: width 0.15s;
+}
+
+.volume-osd .vol-pct {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 6px;
+    text-align: right;
+}
+
+/* ── Toast (favorite / refresh feedback) ──────────────── */
+
+.toast {
+    position: absolute;
+    bottom: 80px;
+    left: 50%;
+    transform: translateX(-50%) translateY(8px);
+    background: rgba(0, 0, 0, 0.85);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    padding: 12px 28px;
+    border-radius: 24px;
+    font-size: 16px;
+    opacity: 0;
+    transition: opacity 0.25s, transform 0.25s;
+    pointer-events: none;
+    z-index: 40;
+    max-width: 80%;
+    text-align: center;
+}
+
+.toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+
+/* ── Favorite channel highlight ───────────────────────── */
+
+.channel-item.favorite {
+    border-left-color: var(--warning);
+}
+
+.channel-item.favorite .channel-name {
+    color: var(--warning);
+}
+
+/* ── Responsive: hide sidebar toggle on large screens ──── */
+
 @media (min-width: 769px) {
     .sidebar-toggle { display: none; }
 }

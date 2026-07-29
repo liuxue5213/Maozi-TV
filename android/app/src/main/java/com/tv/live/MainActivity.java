@@ -54,6 +54,9 @@ public class MainActivity extends AppCompatActivity {
     private static final String KEY_STANDALONE_URL = "standalone_url";
     private static final String KEY_CACHED_JSON = "cached_channels_json";
     private static final String KEY_CACHED_VERSION = "cached_version";
+    // last generated_at_ts seen for the cached JSON — the real update signal.
+    // (EXPORT_VERSION is a constant, so comparing it alone never detects updates.)
+    private static final String KEY_CACHED_TS = "cached_generated_ts";
     private static final String KEY_MODE = "mode"; // "server" or "standalone"
     private static final String DEFAULT_SERVER_URL = "http://192.168.1.100:8000";
 
@@ -94,12 +97,17 @@ public class MainActivity extends AppCompatActivity {
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
         settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
-        settings.setAllowFileAccess(false);
-        settings.setAllowContentAccess(false);
-        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-        settings.setUserAgentString(settings.getUserAgentString() + " MaoziTV/1.0");
+        // Standalone mode loads the UI from file:///android_asset/, so file
+        // scheme access must be enabled. Keep these consistent (previously the
+        // first two were disabled while the *FromFileURLs flags were enabled,
+        // which is contradictory). Content access is not needed here.
+        settings.setAllowFileAccess(true);
         settings.setAllowFileAccessFromFileURLs(true);
         settings.setAllowUniversalAccessFromFileURLs(true);
+        // Stream URLs are https; allow https content when the page itself is
+        // loaded over file:// (standalone mode).
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+        settings.setUserAgentString(settings.getUserAgentString() + " MaoziTV/1.0");
 
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
         webView.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
@@ -158,6 +166,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void fetchChannelsJson() {
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        long cachedTs = prefs.getLong(KEY_CACHED_TS, 0);
         int cachedVersion = prefs.getInt(KEY_CACHED_VERSION, 0);
         String cachedJson = prefs.getString(KEY_CACHED_JSON, null);
 
@@ -194,30 +203,37 @@ public class MainActivity extends AppCompatActivity {
 
                 String jsonData = sb.toString();
 
-                // 解析版本号
+                // 解析时间戳 — 这是判断更新的真正依据（EXPORT_VERSION 是常量，
+                // 永远不变，不能用来判断 channels.json 是否有更新）
                 JSONObject obj = new JSONObject(jsonData);
+                long remoteTs = obj.optLong("generated_at_ts", 0);
                 int remoteVersion = obj.optInt("version", 0);
-                Log.i(TAG, "Remote version: " + remoteVersion + ", cached: " + cachedVersion);
+                Log.i(TAG, "Remote ts=" + remoteTs + " v" + remoteVersion
+                        + ", cached ts=" + cachedTs + " v" + cachedVersion);
 
-                // 版本有更新 → 缓存并注入
-                if (remoteVersion > cachedVersion || cachedJson == null) {
-                    // 缓存
+                boolean noCache = (cachedJson == null);
+                boolean hasNewerData = (remoteTs > cachedTs)
+                        || (remoteTs == 0 && remoteVersion > cachedVersion);
+
+                // 时间戳有更新（或无缓存）→ 缓存并注入
+                if (hasNewerData || noCache) {
                     prefs.edit()
                             .putString(KEY_CACHED_JSON, jsonData)
                             .putInt(KEY_CACHED_VERSION, remoteVersion)
+                            .putLong(KEY_CACHED_TS, remoteTs)
                             .apply();
-                    Log.i(TAG, "New version cached: v" + remoteVersion);
+                    Log.i(TAG, "New data cached: v" + remoteVersion + " ts=" + remoteTs);
 
                     // 注入到 WebView (必须在主线程)
+                    String injectData = jsonData;
                     mainHandler.post(() -> {
-                        webView.evaluateJavascript(
-                                "initFromJson(" + jsonData + ")", null);
+                        injectJsonToWebView(injectData);
                         Toast.makeText(MainActivity.this,
-                                "频道已更新 (v" + remoteVersion + ")", Toast.LENGTH_SHORT).show();
+                                "频道已更新", Toast.LENGTH_SHORT).show();
                     });
                 } else {
-                    Log.i(TAG, "Version unchanged, using cached data");
-                    // 版本没变，用缓存的
+                    Log.i(TAG, "Data unchanged, using cached data");
+                    // 数据没变，用缓存的
                     useCachedJson(cachedJson);
                 }
 
@@ -233,6 +249,20 @@ public class MainActivity extends AppCompatActivity {
         useCachedJson(cachedJson);
     }
 
+    /**
+     * Safely inject a JSON string into the WebView by passing it as a string
+     * argument rather than string-concatenating into JS source. Avoids edge
+     * cases around quotes / {@code </script>} sequences in the payload.
+     */
+    private void injectJsonToWebView(String jsonData) {
+        // Escape backslash and single-quote, then wrap in single quotes so JS
+        // parses it as a literal string; initFromJson JSON.parses it itself.
+        String safe = jsonData.replace("\\", "\\\\").replace("'", "\\'");
+        String js = "(function(){try{initFromJson(JSON.parse('" + safe + "'));}"
+                + "catch(e){console.error('initFromJson failed:',e);}})();";
+        webView.evaluateJavascript(js, null);
+    }
+
     private void useCachedJson(String cachedJson) {
         if (cachedJson == null) {
             mainHandler.post(() ->
@@ -240,9 +270,22 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         mainHandler.post(() -> {
-            webView.evaluateJavascript("initFromJson(" + cachedJson + ")", null);
+            injectJsonToWebView(cachedJson);
             Toast.makeText(MainActivity.this, "使用缓存的频道列表", Toast.LENGTH_SHORT).show();
         });
+    }
+
+    /**
+     * 强制重新拉取频道 JSON（忽略缓存版本）。供"更新频道源"入口和
+     * AndroidBridge.refreshChannels() JS 接口调用。在后台线程执行。
+     */
+    private void refreshChannels() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        // 清空缓存时间戳，使 fetchChannelsJson 视为"必然有更新"而重新拉取
+        prefs.edit().putLong(KEY_CACHED_TS, 0).apply();
+        mainHandler.post(() ->
+                Toast.makeText(MainActivity.this, "正在更新频道源...", Toast.LENGTH_SHORT).show());
+        executor.execute(this::fetchChannelsJson);
     }
 
     // ── Android → JavaScript Bridge ─────────────────────────
@@ -253,6 +296,12 @@ public class MainActivity extends AppCompatActivity {
             SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
             return prefs.getString(KEY_CACHED_JSON, "{}");
         }
+
+        /** JS 调用：强制重新拉取频道源（"更新频道源"按钮触发）。 */
+        @JavascriptInterface
+        public void refreshChannels() {
+            MainActivity.this.refreshChannels();
+        }
     }
 
     // ── 模式切换 / 设置 ─────────────────────────────────────
@@ -262,12 +311,16 @@ public class MainActivity extends AppCompatActivity {
         String currentMode = prefs.getString(KEY_MODE, "standalone");
 
         new AlertDialog.Builder(this)
-                .setTitle("选择模式")
+                .setTitle("设置 (MENU 键打开)")
                 .setItems(new String[]{
+                        "🔄 更新频道源 (重新拉取)",
                         "🌐 独立模式 (Gitee/GitHub 拉取)",
                         "🖥️ 服务器模式 (连接后端 API)"
                 }, (dialog, which) -> {
                     if (which == 0) {
+                        // 更新频道源 — 强制重新拉取最新 channels.json
+                        refreshChannels();
+                    } else if (which == 1) {
                         // 独立模式
                         prefs.edit().putString(KEY_MODE, "standalone").apply();
                         Toast.makeText(this, "已切换到独立模式", Toast.LENGTH_SHORT).show();
@@ -316,10 +369,14 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     public boolean onKeyLongPress(int keyCode, KeyEvent event) {
+        // 长按 OK/Enter = 收藏/取消收藏当前焦点频道（注入 JS 调用 toggleFavorite）
         if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER
                 || keyCode == KeyEvent.KEYCODE_ENTER
                 || keyCode == KeyEvent.KEYCODE_BUTTON_SELECT) {
-            showModeDialog();
+            mainHandler.post(() ->
+                    webView.evaluateJavascript(
+                            "(function(){if(typeof toggleFavorite==='function'){toggleFavorite();}})();",
+                            null));
             return true;
         }
         return super.onKeyLongPress(keyCode, event);
@@ -327,11 +384,39 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
+        // MENU 键 = 打开设置（模式切换 / 更新源）
         if (keyCode == KeyEvent.KEYCODE_MENU) {
             showModeDialog();
             return true;
         }
+        // 对 OK/Enter 启用长按追踪，使 onKeyLongPress 能可靠触发。
+        // 必须在 ACTION_DOWN 时调 startTracking() 并 return true，否则长按判定不生效。
+        if ((keyCode == KeyEvent.KEYCODE_DPAD_CENTER
+                || keyCode == KeyEvent.KEYCODE_ENTER
+                || keyCode == KeyEvent.KEYCODE_BUTTON_SELECT)
+                && event.getRepeatCount() == 0) {
+            event.startTracking();
+            return true;
+        }
         return super.onKeyDown(keyCode, event);
+    }
+
+    @Override
+    public boolean onKeyUp(int keyCode, KeyEvent event) {
+        // OK/Enter 短按（非长按）= 播放当前焦点频道。直接调用 JS 的播放逻辑，
+        // 避免 onKeyDown return true 后 WebView 收不到按键。
+        if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER
+                || keyCode == KeyEvent.KEYCODE_ENTER
+                || keyCode == KeyEvent.KEYCODE_BUTTON_SELECT) {
+            if (!event.isLongPress()) {
+                mainHandler.post(() ->
+                        webView.evaluateJavascript(
+                                "(function(){if(typeof playFocusedChannel==='function'){playFocusedChannel();}})();",
+                                null));
+            }
+            return true;
+        }
+        return super.onKeyUp(keyCode, event);
     }
 
     @Override

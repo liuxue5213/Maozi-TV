@@ -23,14 +23,25 @@ from .database import init_db
 from .source_manager import SourceManager
 
 # ── Logging setup ────────────────────────────────────────────
+def _build_log_handlers():
+    handlers = [logging.StreamHandler(sys.stdout)]
+    if config.log_file:
+        try:
+            log_dir = os.path.dirname(config.log_file)
+            if log_dir:
+                os.makedirs(log_dir, exist_ok=True)
+            handlers.append(logging.FileHandler(config.log_file))
+        except OSError:
+            # Fall back to stdout-only if the log file path isn't writable
+            pass
+    return handlers
+
+
 logging.basicConfig(
     level=getattr(logging, config.log_level.upper(), logging.INFO),
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        *([logging.FileHandler(config.log_file)] if config.log_file else []),
-    ],
+    handlers=_build_log_handlers(),
 )
 logger = logging.getLogger(__name__)
 
@@ -60,6 +71,7 @@ class BackgroundScheduler:
         manager = SourceManager()
         crawl_interval = config.crawl_interval_minutes * 60
         check_interval = config.check_interval_minutes * 60
+        purge_interval = crawl_interval * 2  # Purge dead sources every 2 crawl cycles
 
         # Wait a bit before first run to let the server start
         if self._stop_event.wait(timeout=15):
@@ -68,11 +80,14 @@ class BackgroundScheduler:
         logger.info("Starting initial crawl cycle...")
         try:
             manager.run_full_cycle()
+            # Purge dead sources after initial crawl
+            manager.purge_dead_sources()
         except Exception as e:
             logger.error("Initial crawl failed: %s", e, exc_info=True)
 
         last_crawl = time.monotonic()
         last_check = time.monotonic()
+        last_purge = time.monotonic()
 
         while not self._stop_event.is_set():
             now = time.monotonic()
@@ -87,6 +102,14 @@ class BackgroundScheduler:
                     logger.info("=== Periodic health check ===")
                     manager.check_and_replace_all()
                     last_check = now
+
+                if now - last_purge >= purge_interval:
+                    logger.info("=== Periodic purge of dead sources ===")
+                    result = manager.purge_dead_sources()
+                    if result["sources_marked_dead"] or result["channels_hidden"]:
+                        logger.info("Marked %d sources as dead, hidden %d channels",
+                                    result["sources_marked_dead"], result["channels_hidden"])
+                    last_purge = now
 
                 # Sleep for 30 seconds between loops, checking stop event
                 self._stop_event.wait(timeout=30)
@@ -120,11 +143,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — allow TV app from any origin
+# CORS — allow TV app from any origin.
+# allow_credentials MUST be False when allow_origins=["*"] (per the CORS spec),
+# otherwise browsers reject credentialed responses. This service uses no cookies.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from backend.crawlers.github_crawler import GitHubM3uCrawler
 from backend.crawlers.base import ChannelEntry
+from backend.crawlers.normalize import normalize_channel_name, display_name_for
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("standalone_export")
@@ -36,16 +37,26 @@ M3U_SOURCES = [
     "https://raw.githubusercontent.com/BurningC4/Chinese-IPTV/master/TV-IPV4.m3u",
     "https://live.zbds.top/tv/iptv4.m3u",
     "https://raw.githubusercontent.com/CCSH/IPTV/refs/heads/main/live.m3u",
+    # fanmingming IPv6 — 原域名失效, 改用 GitHub raw
+    "https://raw.githubusercontent.com/fanmingming/live/main/tv/m3u/ipv6.m3u",
+    # hujingguang — 每 15 分钟自动更新, 稳定性高
+    "https://raw.githubusercontent.com/hujingguang/ChinaIPTV/main/cnTV_AutoUpdate.m3u8",
+    # yifoo 精简版 — 每频道只保留最佳源, 质量优先
+    "https://raw.githubusercontent.com/yifoo/autoiptv/main/merged/%E7%B2%BE%E7%AE%80%E7%89%88.m3u",
 ]
 
 MAX_SOURCES_PER_CHANNEL = 5
 
 
 def build_channel_list(entries: List[ChannelEntry]) -> List[Dict[str, Any]]:
-    """Group entries by name and merge sources, same logic as source_manager._merge_into_db."""
+    """Group entries by NORMALISED name and merge sources.
+
+    Mirrors source_manager._merge_into_db so "CCTV-1" / "CCTV1" / "央视一套"
+    collapse into a single channel with merged backup URLs.
+    """
     groups: Dict[str, List[ChannelEntry]] = {}
     for entry in entries:
-        key = entry.name.strip()
+        key = normalize_channel_name(entry.name)
         if not key or not entry.url:
             continue
         if not entry.url.startswith(("http://", "https://")):
@@ -55,15 +66,16 @@ def build_channel_list(entries: List[ChannelEntry]) -> List[Dict[str, Any]]:
         groups[key].append(entry)
 
     channels = []
-    for name, group_entries in groups.items():
+    for key, group_entries in groups.items():
         primary = group_entries[0]
+        display = display_name_for(primary.name)
         urls = list(dict.fromkeys(e.url for e in group_entries))
         # Limit sources per channel
         urls = urls[:MAX_SOURCES_PER_CHANNEL]
 
         channels.append({
             "id": len(channels) + 1,
-            "name": name,
+            "name": display,
             "group": primary.group or "未分类",
             "logo": primary.logo or "",
             "url": urls[0] if urls else "",

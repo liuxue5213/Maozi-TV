@@ -193,3 +193,19 @@ def export_channel_data():
     """Export all visible channels as a static JSON file (for standalone APK use)."""
     data = export_channels()
     return data
+
+
+@router.post("/purge")
+def purge_dead_sources(min_failures: int = Query(3, description="Min consecutive failures to mark source as dead")):
+    """Mark consistently dead sources as temporarily disabled.
+
+    This helps reduce wasted health checks on broken sources.
+    Sources with min_failures consecutive failures will be moved to dead_sources list.
+    They will be excluded from health checks until recovered by next crawl.
+    """
+    result = source_manager.purge_dead_sources(min_failures=min_failures)
+    return {
+        "status": "completed",
+        "sources_marked_dead": result["sources_marked_dead"],
+        "channels_hidden": result["channels_hidden"],
+    }
