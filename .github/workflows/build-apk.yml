@@ -52,20 +52,20 @@ jobs:
           fi
           chmod +x gradlew
 
-      - name: 编译 Release APK（使用内置签名）
+      - name: 编译 Debug APK
         working-directory: ./android
-        run: ./gradlew assembleRelease
+        run: ./gradlew assembleDebug
 
       - name: 重命名 APK
         working-directory: ./android
         run: |
-          mv app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/MaoziTV.apk
-          ls -lh app/build/outputs/apk/release/MaoziTV.apk
+          mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/MaoziTV-debug.apk
+          ls -lh app/build/outputs/apk/debug/MaoziTV-debug.apk
 
-      - name: 上传 APK
+      - name: 上传 Debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: MaoziTV-APK
-          path: android/app/build/outputs/apk/release/MaoziTV.apk
+          name: MaoziTV-Debug-APK
+          path: android/app/build/outputs/apk/debug/MaoziTV-debug.apk
           if-no-files-found: error
           retention-days: 30
