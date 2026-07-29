@@ -1,0 +1,88 @@
+name: Export channels.json
+
+on:
+  schedule:
+    # 每 6 小时自动更新一次
+    - cron: "0 */6 * * *"
+  workflow_dispatch:  # 手动触发
+
+permissions:
+  contents: write
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装依赖
+        run: pip install requests
+
+      - name: 导出 channels.json
+        run: python backend/standalone_export.py channels.json
+
+      - name: 部署 channels.json 到 gh-pages (GitHub)
+        run: |
+          git fetch origin gh-pages 2>/dev/null || true
+          if git rev-parse origin/gh-pages >/dev/null 2>&1; then
+            git checkout gh-pages
+          else
+            git checkout --orphan gh-pages
+            git rm -rf . 2>/dev/null || true
+          fi
+
+          git checkout main -- channels.json
+          git config user.name "MaoziTV Bot"
+          git config user.email "bot@maozi.tv"
+          git add channels.json
+          if git diff --cached --quiet; then
+            echo "channels.json 无变化，跳过 GitHub 提交"
+          else
+            git commit -m "channels.json 自动更新 $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git push origin gh-pages
+            echo "✅ channels.json 已推送到 GitHub gh-pages"
+          fi
+
+      - name: 同步 channels.json 到 Gitee
+        if: ${{ secrets.GITEE_TOKEN != '' }}
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          # 切回 main 获取 channels.json
+          git checkout main -- channels.json
+
+          # 用 Gitee API 更新 channels.json
+          # 先获取当前文件 sha（更新时需要）
+          SHA=$(curl -s "https://gitee.com/api/v5/repos/liuxue5213/maozi-tv/contents/channels.json?ref=master" \
+            -H "Authorization: token ${GITEE_TOKEN}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('sha',''))" 2>/dev/null || echo "")
+
+          # Base64 编码文件内容
+          CONTENT=$(base64 -w0 channels.json 2>/dev/null || base64 channels.json)
+
+          # 构建请求体
+          if [ -n "$SHA" ]; then
+            # 更新已有文件
+            curl -s -X PUT "https://gitee.com/api/v5/repos/liuxue5213/maozi-tv/contents/channels.json" \
+              -H "Authorization: token ${GITEE_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{\"content\":\"$CONTENT\",\"sha\":\"$SHA\",\"message\":\"channels.json 自动更新 $(date -u '+%Y-%m-%d %H:%M UTC')\",\"branch\":\"master\"}" \
+              | python3 -c "import sys,json; print('✅ Gitee: channels.json 已更新' if 'content' in json.load(sys.stdin) else '⚠️ Gitee 更新失败')"
+          else
+            # 创建新文件
+            curl -s -X POST "https://gitee.com/api/v5/repos/liuxue5213/maozi-tv/contents/channels.json" \
+              -H "Authorization: token ${GITEE_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{\"content\":\"$CONTENT\",\"message\":\"channels.json 自动更新 $(date -u '+%Y-%m-%d %H:%M UTC')\",\"branch\":\"master\"}" \
+              | python3 -c "import sys,json; print('✅ Gitee: channels.json 已创建' if 'content' in json.load(sys.stdin) else '⚠️ Gitee 创建失败')"
+          fi
+
+          echo "🔗 Raw URL: https://gitee.com/liuxue5213/maozi-tv/raw/master/channels.json"

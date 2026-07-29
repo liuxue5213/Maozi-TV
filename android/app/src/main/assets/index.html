@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>TV Live — 电视直播</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- hls.js from CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+</head>
+<body>
+<div class="app-container">
+
+    <!-- ── Sidebar ──────────────────────────────────── -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <h1>📺 TV Live</h1>
+        </div>
+
+        <!-- Filter tabs -->
+        <div class="sidebar-tabs">
+            <button class="tab-btn active" id="tab-all">全部频道</button>
+            <button class="tab-btn" id="tab-healthy">在线频道</button>
+        </div>
+
+        <!-- Channel list -->
+        <div class="channel-scroll" id="channel-list">
+            <div class="group-label" style="padding:40px;text-align:center;color:var(--text-secondary);">
+                正在加载频道列表...
+            </div>
+        </div>
+    </aside>
+
+    <!-- ── Player Area ──────────────────────────────── -->
+    <main class="player-area">
+
+        <!-- Mobile sidebar toggle -->
+        <button class="sidebar-toggle" id="sidebar-toggle" aria-label="切换频道列表">
+            ☰
+        </button>
+
+        <!-- Video container -->
+        <div class="video-container">
+            <video id="video-player" playsinline autoplay></video>
+
+            <!-- Overlay states -->
+            <div class="overlay" id="player-overlay">
+                <div class="overlay-icon" id="overlay-icon">📺</div>
+                <div class="overlay-text" id="overlay-text">选择频道开始观看</div>
+                <div class="overlay-subtext" id="overlay-subtext"></div>
+
+                <!-- Loading spinner -->
+                <div class="spinner hidden" id="loading-spinner"></div>
+
+                <!-- Error state -->
+                <div class="hidden" id="error-state">
+                    <div class="error-message" id="error-message">播放失败</div>
+                    <button class="retry-btn" id="retry-btn">重试</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Now playing bar -->
+        <div class="now-playing">
+            <span class="channel-name" id="now-playing-name">未选择</span>
+            <span class="source-hint" id="now-playing-source"></span>
+            <span class="quality-dot dead" id="quality-dot"></span>
+        </div>
+    </main>
+
+</div>
+
+<script src="player.js"></script>
+<script>
+    // Mobile sidebar toggle
+    document.getElementById('sidebar-toggle').addEventListener('click', () => {
+        document.getElementById('sidebar').classList.toggle('open');
+    });
+
+    // Close sidebar on channel select (mobile)
+    document.getElementById('channel-list').addEventListener('click', () => {
+        if (window.innerWidth <= 768) {
+            document.getElementById('sidebar').classList.remove('open');
+        }
+    });
+</script>
+</body>
+</html>

@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from ..database import Channel, SessionLocal, SourceCheckLog
 from ..source_manager import SourceManager
+from ..exporter import export_channels
 
 logger = logging.getLogger(__name__)
 
@@ -185,3 +186,12 @@ def get_summary():
         )
     finally:
         db.close()
+
+
+@router.get("/export")
+def export_channel_data(
+    pretty: bool = Query(True, description="Pretty-print JSON"),
+):
+    """Export all visible channels as a static JSON file (for standalone APK use)."""
+    data = export_channels()
+    return data
