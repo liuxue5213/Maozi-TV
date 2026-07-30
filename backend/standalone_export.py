@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
 """Standalone channel exporter — runs without a database.
 
-Crawls m3u sources directly and outputs channels.json.
-Designed to run on GitHub Actions (no database, no backend required).
+Crawls m3u sources directly, (optionally) health-checks every stream, and
+outputs a channels.json that the APK fetches. Designed to run on GitHub
+Actions (no database, no backend required).
 
 Usage:
-    python backend/standalone_export.py [output_path]
+    python backend/standalone_export.py [output_path] [--no-check] [--timeout 10] [--workers 40]
     # Default output: ./channels.json
 """
 
+import argparse
+import concurrent.futures
 import json
 import logging
 import os
 import sys
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 # Add parent dir so we can import sibling modules
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -80,16 +83,119 @@ def build_channel_list(entries: List[ChannelEntry]) -> List[Dict[str, Any]]:
             "logo": primary.logo or "",
             "url": urls[0] if urls else "",
             "sources": urls,
-            "healthy": True,  # In standalone mode we can't health-check
+            "healthy": True,  # 将由 health_check_channels() 真实验证
         })
 
     return channels
 
 
-def main():
-    output_path = sys.argv[1] if len(sys.argv) > 1 else "channels.json"
+def _check_one_source(url: str, timeout: int) -> Tuple[str, bool, Optional[float]]:
+    """Probe a single stream URL. Returns (url, is_healthy, response_time).
 
-    logger.info("Starting standalone export...")
+    Reuses the backend's battle-tested checker (HEAD → GET+Range → m3u8 parse),
+    so the standalone build shares the exact same detection logic as the live
+    server. run_health_check_safe will swallow any exception here.
+    """
+    from backend.checker import check_source
+    is_healthy, resp_time, _, _ = check_source(url, timeout=timeout)
+    return (url, is_healthy, resp_time)
+
+
+def health_check_channels(
+    channels: List[Dict[str, Any]],
+    timeout: int = 10,
+    max_workers: int = 40,
+) -> List[Dict[str, Any]]:
+    """Health-check every source of every channel concurrently.
+
+    - Drops dead sources, keeps only working ones (ordered by response time).
+    - Channels whose every source is dead are removed entirely.
+    Returns the filtered + re-sorted channel list.
+    """
+    # Flatten all (channel_id, url) pairs for a single concurrent sweep.
+    tasks: List[Tuple[int, str]] = []
+    for ch in channels:
+        for url in ch.get("sources", []):
+            tasks.append((ch["id"], url))
+    logger.info("Health-checking %d sources across %d channels (timeout=%ds, workers=%d)...",
+                len(tasks), len(channels), timeout, max_workers)
+
+    # ch_id -> {url: (healthy, resp_time)}
+    results: Dict[int, Dict[str, Tuple[bool, Optional[float]]]] = {}
+    checked = 0
+    dead = 0
+    t0 = time.monotonic()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+        future_to_task = {
+            pool.submit(_check_one_source, url, timeout): (ch_id, url)
+            for (ch_id, url) in tasks
+        }
+        for future in concurrent.futures.as_completed(future_to_task):
+            ch_id, url = future_to_task[future]
+            try:
+                _, is_healthy, resp_time = future.result()
+            except Exception as e:
+                logger.debug("check error for %s: %s", url[:60], e)
+                is_healthy, resp_time = False, None
+            results.setdefault(ch_id, {})[url] = (is_healthy, resp_time)
+            checked += 1
+            if not is_healthy:
+                dead += 1
+            if checked % 50 == 0:
+                logger.info("  checked %d/%d (dead so far: %d)...", checked, len(tasks), dead)
+
+    elapsed = time.monotonic() - t0
+    logger.info("Health check done in %.1fs: %d ok / %d dead", elapsed, checked - dead, dead)
+
+    # Rebuild channels keeping only healthy sources, sorted fastest-first.
+    cleaned: List[Dict[str, Any]] = []
+    new_id = 0
+    for ch in channels:
+        ch_res = results.get(ch["id"], {})
+        alive = [
+            (url, info[1])
+            for url, info in ch_res.items()
+            if info[0]
+        ]
+        # Sort alive sources by response time (fastest first); None last.
+        alive.sort(key=lambda x: (x[1] is None, x[1] or 999))
+        if not alive:
+            continue  # all sources dead → drop channel
+        new_id += 1
+        alive_urls = [u for (u, _) in alive]
+        cleaned.append({
+            "id": new_id,
+            "name": ch["name"],
+            "group": ch["group"],
+            "logo": ch["logo"],
+            "url": alive_urls[0],
+            "sources": alive_urls,
+            "healthy": True,
+        })
+
+    dropped = len(channels) - len(cleaned)
+    logger.info("Kept %d channels with healthy sources, dropped %d fully-dead channels",
+                len(cleaned), dropped)
+    return cleaned
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Standalone channel exporter")
+    parser.add_argument("output_path", nargs="?", default="channels.json",
+                        help="Output JSON path (default: channels.json)")
+    parser.add_argument("--no-check", action="store_true",
+                        help="Skip health check (export all crawled sources, unfiltered)")
+    parser.add_argument("--timeout", type=int, default=10,
+                        help="Per-source health-check timeout in seconds (default: 10)")
+    parser.add_argument("--workers", type=int, default=40,
+                        help="Concurrent health-check workers (default: 40)")
+    args = parser.parse_args()
+
+    output_path = args.output_path
+
+    logger.info("Starting standalone export (health check: %s)...",
+                "OFF" if args.no_check else "ON")
 
     crawler = GitHubM3uCrawler(M3U_SOURCES)
     entries = crawler.crawl()
@@ -97,6 +203,11 @@ def main():
 
     channels = build_channel_list(entries)
     logger.info("Built %d channels", len(channels))
+
+    # 健康检测：并发验证所有源，剔除死源，按响应时间排序（除非 --no-check）
+    if not args.no_check:
+        channels = health_check_channels(
+            channels, timeout=args.timeout, max_workers=args.workers)
 
     payload = {
         "version": EXPORT_VERSION,

@@ -256,15 +256,17 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * Safely inject a JSON string into the WebView by passing it as a string
-     * argument rather than string-concatenating into JS source. Avoids edge
-     * cases around quotes / {@code </script>} sequences in the payload.
+     * Safely inject a JSON string into the WebView.
+     *
+     * We pass the raw JSON object literal directly to initFromJson() — NOT
+     * wrapped in JSON.parse('...'). The channels.json payload contains real
+     * newline characters (it is pretty-printed), and a literal newline inside
+     * a JS single-quoted string is a SyntaxError that silently aborts the
+     * whole injection (leaving the channel list empty). Embedding the JSON as
+     * a bare object literal sidesteps that entirely and is also faster.
      */
     private void injectJsonToWebView(String jsonData) {
-        // Escape backslash and single-quote, then wrap in single quotes so JS
-        // parses it as a literal string; initFromJson JSON.parses it itself.
-        String safe = jsonData.replace("\\", "\\\\").replace("'", "\\'");
-        String js = "(function(){try{initFromJson(JSON.parse('" + safe + "'));}"
+        String js = "(function(){try{initFromJson(" + jsonData + ");}"
                 + "catch(e){console.error('initFromJson failed:',e);}})();";
         webView.evaluateJavascript(js, null);
     }

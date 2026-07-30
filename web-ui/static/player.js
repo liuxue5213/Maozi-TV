@@ -135,6 +135,11 @@ window.refreshChannels = function () {
  * @param {Object} data - The parsed channels.json object
  */
 window.initFromJson = function (data) {
+    // 容错：若传入的是字符串（JSON 文本），先解析。Android 端也可能直接传对象。
+    if (typeof data === 'string') {
+        try { data = JSON.parse(data); }
+        catch (e) { console.error('initFromJson: JSON parse failed', e); return; }
+    }
     if (!data || !data.channels || !data.channels.length) {
         console.error('initFromJson: invalid data', data);
         return;

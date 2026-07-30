@@ -27,8 +27,15 @@ jobs:
       - name: 安装依赖
         run: pip install requests
 
-      - name: 导出 channels.json
-        run: python backend/standalone_export.py channels.json
+      - name: 导出 channels.json（含健康检测）
+        run: |
+          # 优先：爬取 + 并发健康检测 + 剔除死源（耗时约 5-15 分钟）
+          # 超时 25 分钟，失败则降级为无检测模式（保证总能产出 JSON）
+          timeout 1500 python backend/standalone_export.py channels.json \
+            --timeout 10 --workers 40 || {
+            echo "⚠️ 健康检测超时或失败，降级为无检测模式重新导出..."
+            python backend/standalone_export.py channels.json --no-check
+          }
 
       - name: 部署 channels.json 到 gh-pages (GitHub)
         run: |
