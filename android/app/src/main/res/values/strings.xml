@@ -2,4 +2,20 @@
 <resources>
     <string name="app_name">帽子TV</string>
     <string name="server_url_default">http://192.168.1.100:8000</string>
+    <string name="loading">加载中…</string>
+    <string name="no_channels">无法获取频道列表</string>
+    <string name="channels_updated">频道已更新</string>
+    <string name="using_cache">使用缓存的频道列表</string>
+    <string name="refreshing">正在更新频道源…</string>
+    <string name="source_switch">切换播放源</string>
+    <string name="source_auto_next">播放失败，切换下一个源…</string>
+    <string name="favorite_added">已收藏</string>
+    <string name="favorite_removed">已取消收藏</string>
+    <string name="mode_standalone">独立模式 (Gitee/GitHub)</string>
+    <string name="mode_server">服务器模式 (连接后端 API)</string>
+    <string name="settings_title">设置</string>
+    <string name="refresh_channels">更新频道源 (重新拉取)</string>
+    <string name="server_url_hint">输入后端服务器的 IP:端口</string>
+    <string name="all_groups">全部</string>
+    <string name="favorites_group">收藏</string>
 </resources>
