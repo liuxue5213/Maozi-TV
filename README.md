@@ -152,18 +152,24 @@ curl "http://localhost:8000/api/channels?visible_only=true&healthy_only=true"
 
 ## 📡 数据来源
 
-频道源来自以下公开项目（感谢各位开源作者），后端会从多个源汇总、去重、归一化合并，每个频道保留多个备用源并自动健康检测：
+频道重心为**国内（央视/卫视/地方台）+ 港澳台**，国外频道有则保留、不强求。后端会从以下多个公开源汇总、去重、归一化合并（含繁简体/线路号/画质前缀统一），每个频道保留多个备用源并自动健康检测：
 
+**🇨🇳 国内综合（央视 + 卫视 + 地方台）**
 - [bestK/iptv](https://github.com/bestK/iptv) — 540+ 频道，每日更新
-- [iptv-org/iptv](https://github.com/iptv-org/iptv) — 全球频道集合 + 中国频道
 - [BurningC4/Chinese-IPTV](https://github.com/BurningC4/Chinese-IPTV) — CCTV IPv4 源
 - [vbskycn/iptv](https://github.com/vbskycn/iptv) — IPv4/IPv6 自动扫描源（每 6 小时更新）
 - [CCSH/IPTV](https://github.com/CCSH/IPTV) — 每日更新
 - [fanmingming/live](https://github.com/fanmingming/live) — IPv6 高清源
 - [hujingguang/ChinaIPTV](https://github.com/hujingguang/ChinaIPTV) — **每 15 分钟自动更新**，稳定性高
 - [yifoo/autoiptv](https://github.com/yifoo/autoiptv) — 多源同步去重精简版，每频道只保留最佳源
+- [iptv-org/iptv](https://github.com/iptv-org/iptv) — 中国频道（cn.m3u，已过滤掉国外为主的全球大表）
 
-⚠️ 本程序仅作技术学习用途，所有直播源来自公开网络资源。
+**🇭🇰🇲🇴🇹🇼 港澳台**
+- [epg.pw](https://epg.pw) — 台湾（138 频道）、澳门直播源
+- [nthack/IPTVM3U](https://github.com/nthack/IPTVM3U) — 港澳台（翡翠台/TVB 等）、广东地方台
+- [iptv-org/iptv](https://github.com/iptv-org/iptv) — 香港（hk.m3u）、台湾（tw.m3u）精简源
+
+⚠️ 本程序仅作技术学习用途，所有直播源来自公开网络资源。部分港澳台频道可能需要相应网络环境。
 
 ## 📄 许可证
 

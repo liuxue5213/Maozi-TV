@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from backend.crawlers.github_crawler import GitHubM3uCrawler
 from backend.crawlers.base import ChannelEntry
 from backend.crawlers.normalize import normalize_channel_name, display_name_for
+from backend.exporter import detect_region
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("standalone_export")
@@ -33,19 +34,24 @@ logger = logging.getLogger("standalone_export")
 EXPORT_VERSION = 1
 
 # Sources (same as config.py defaults, but hardcoded for standalone use)
+# 重心：国内（央视/卫视/地方台）+ 港澳台为主，国外频道有则保留、不强求。
 M3U_SOURCES = [
+    # ── 国内综合（央视 + 卫视 + 地方台）──────────────────────
     "https://raw.githubusercontent.com/bestK/iptv/main/iptv.m3u",
-    "https://iptv-org.github.io/iptv/index.m3u",
-    "https://iptv-org.github.io/iptv/countries/cn.m3u",
     "https://raw.githubusercontent.com/BurningC4/Chinese-IPTV/master/TV-IPV4.m3u",
     "https://live.zbds.top/tv/iptv4.m3u",
     "https://raw.githubusercontent.com/CCSH/IPTV/refs/heads/main/live.m3u",
-    # fanmingming IPv6 — 原域名失效, 改用 GitHub raw
     "https://raw.githubusercontent.com/fanmingming/live/main/tv/m3u/ipv6.m3u",
-    # hujingguang — 每 15 分钟自动更新, 稳定性高
     "https://raw.githubusercontent.com/hujingguang/ChinaIPTV/main/cnTV_AutoUpdate.m3u8",
-    # yifoo 精简版 — 每频道只保留最佳源, 质量优先
     "https://raw.githubusercontent.com/yifoo/autoiptv/main/merged/%E7%B2%BE%E7%AE%80%E7%89%88.m3u",
+    "https://iptv-org.github.io/iptv/countries/cn.m3u",
+    # ── 港澳台 ────────────────────────────────────────────
+    "https://epg.pw/test_channels_taiwan.m3u",
+    "https://epg.pw/test_channels_macau.m3u",
+    "https://raw.githubusercontent.com/nthack/IPTVM3U/master/HKTW.m3u",
+    "https://raw.githubusercontent.com/nthack/IPTVM3U/master/GD.m3u",
+    "https://iptv-org.github.io/iptv/countries/hk.m3u",
+    "https://iptv-org.github.io/iptv/countries/tw.m3u",
 ]
 
 MAX_SOURCES_PER_CHANNEL = 5
@@ -84,6 +90,7 @@ def build_channel_list(entries: List[ChannelEntry]) -> List[Dict[str, Any]]:
             "url": urls[0] if urls else "",
             "sources": urls,
             "healthy": True,  # 将由 health_check_channels() 真实验证
+            "region": detect_region(primary.group or "未分类", display),
         })
 
     return channels
@@ -172,6 +179,7 @@ def health_check_channels(
             "url": alive_urls[0],
             "sources": alive_urls,
             "healthy": True,
+            "region": ch.get("region", detect_region(ch["group"], ch["name"])),
         })
 
     dropped = len(channels) - len(cleaned)
@@ -209,11 +217,18 @@ def main():
         channels = health_check_channels(
             channels, timeout=args.timeout, max_workers=args.workers)
 
+    # Build region summary
+    region_counts = {"domestic": 0, "international": 0}
+    for ch in channels:
+        r = ch.get("region", "international")
+        region_counts[r] = region_counts.get(r, 0) + 1
+
     payload = {
         "version": EXPORT_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "generated_at_ts": int(time.time()),
         "total": len(channels),
+        "regions": region_counts,
         "channels": channels,
     }
 
