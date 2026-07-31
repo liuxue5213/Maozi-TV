@@ -477,7 +477,7 @@ public class MainActivity extends AppCompatActivity {
             JSONArray chArr = root.optJSONArray("channels");
             if (chArr == null) {
                 Log.e(TAG, "JSON 无 channels 数组");
-                return;
+                return false;
             }
 
             allChannels.clear();
@@ -794,7 +794,6 @@ public class MainActivity extends AppCompatActivity {
                 updateUI();
                 Toast.makeText(MainActivity.this, "使用缓存的频道列表", Toast.LENGTH_SHORT).show();
             }
-        });
         });
     }
 
