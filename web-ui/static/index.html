@@ -18,10 +18,21 @@
             <h1>🎩 帽子TV</h1>
         </div>
 
+        <!-- 搜索框 -->
+        <div class="sidebar-search">
+            <input type="text" id="search-input" placeholder="搜索频道..." autocomplete="off">
+        </div>
+
+        <!-- 国内/国外 大标签 -->
+        <div class="sidebar-region-tabs">
+            <button class="region-btn active" id="region-domestic">国内</button>
+            <button class="region-btn" id="region-international">国外</button>
+        </div>
+
         <!-- Filter tabs -->
         <div class="sidebar-tabs">
-            <button class="tab-btn active" id="tab-all">全部频道</button>
-            <button class="tab-btn" id="tab-healthy">在线频道</button>
+            <button class="tab-btn active" id="tab-all">全部</button>
+            <button class="tab-btn" id="tab-healthy">在线</button>
             <button class="tab-btn" id="tab-fav">⭐ 收藏</button>
         </div>
 
@@ -34,16 +45,50 @@
     </aside>
 
     <!-- ── Player Area ──────────────────────────────── -->
-    <main class="player-area">
-
-        <!-- Mobile sidebar toggle -->
-        <button class="sidebar-toggle" id="sidebar-toggle" aria-label="切换频道列表">
-            ☰
-        </button>
+    <main class="player-area" id="player-area">
 
         <!-- Video container -->
-        <div class="video-container">
+        <div class="video-container" id="video-container">
             <video id="video-player" playsinline autoplay></video>
+
+            <!-- 频道号 OSD -->
+            <div class="channel-number-osd" id="channel-number-osd"></div>
+
+            <!-- 频道信息面板 -->
+            <div class="channel-info-panel hidden" id="channel-info-panel">
+                <div class="info-panel-title">频道信息</div>
+                <div class="info-row"><span class="info-label">频道名</span><span class="info-value" id="info-name">—</span></div>
+                <div class="info-row"><span class="info-label">分组</span><span class="info-value" id="info-group">—</span></div>
+                <div class="info-row"><span class="info-label">源数量</span><span class="info-value" id="info-sources">—</span></div>
+                <div class="info-row"><span class="info-label">当前源</span><span class="info-value" id="info-current-source">—</span></div>
+                <div class="info-row"><span class="info-label">健康状态</span><span class="info-value" id="info-health">—</span></div>
+            </div>
+
+            <!-- 播放器控制栏 -->
+            <div class="player-controls hidden" id="player-controls">
+                <div class="controls-top">
+                    <div class="controls-channel-info">
+                        <span class="controls-channel-name" id="controls-channel-name">未选择</span>
+                        <span class="controls-group-name" id="controls-group-name"></span>
+                    </div>
+                    <div class="controls-right">
+                        <span class="controls-speed" id="controls-speed"></span>
+                    </div>
+                </div>
+                <div class="controls-bottom">
+                    <button class="ctrl-btn" id="btn-prev-ch" title="上一频道">⏮</button>
+                    <button class="ctrl-btn" id="btn-play-pause" title="暂停/播放">⏸</button>
+                    <button class="ctrl-btn" id="btn-next-ch" title="下一频道">⏭</button>
+                    <div class="volume-control">
+                        <span class="vol-icon" id="vol-icon">🔊</span>
+                        <input type="range" id="volume-slider" min="0" max="100" value="100" class="volume-slider">
+                    </div>
+                    <button class="ctrl-btn" id="btn-source" title="切换源">🔄</button>
+                    <button class="ctrl-btn" id="btn-fullscreen" title="全屏">⛶</button>
+                </div>
+                <!-- 源选择弹窗 -->
+                <div class="source-popup hidden" id="source-popup"></div>
+            </div>
 
             <!-- Volume OSD (ArrowLeft / ArrowRight) -->
             <div class="volume-osd" id="volume-osd">
@@ -55,7 +100,7 @@
             <!-- Overlay states -->
             <div class="overlay" id="player-overlay">
                 <div class="overlay-icon" id="overlay-icon">📺</div>
-                <div class="overlay-text" id="overlay-text">选择频道开始观看</div>
+                <div class="overlay-text" id="overlay-text">点击屏幕选择频道</div>
                 <div class="overlay-subtext" id="overlay-subtext"></div>
 
                 <!-- Loading spinner -->
@@ -69,13 +114,6 @@
             </div>
         </div>
 
-        <!-- Now playing bar -->
-        <div class="now-playing">
-            <span class="channel-name" id="now-playing-name">未选择</span>
-            <span class="source-hint" id="now-playing-source"></span>
-            <span class="quality-dot dead" id="quality-dot"></span>
-        </div>
-
         <!-- Global toast (favorite / refresh feedback) -->
         <div class="toast" id="toast"></div>
     </main>
@@ -83,18 +121,5 @@
 </div>
 
 <script src="player.js"></script>
-<script>
-    // Mobile sidebar toggle
-    document.getElementById('sidebar-toggle').addEventListener('click', () => {
-        document.getElementById('sidebar').classList.toggle('open');
-    });
-
-    // Close sidebar on channel select (mobile)
-    document.getElementById('channel-list').addEventListener('click', () => {
-        if (window.innerWidth <= 768) {
-            document.getElementById('sidebar').classList.remove('open');
-        }
-    });
-</script>
 </body>
 </html>
