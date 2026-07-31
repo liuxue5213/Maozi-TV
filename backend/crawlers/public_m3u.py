@@ -11,6 +11,30 @@ from .base import ChannelEntry
 
 logger = logging.getLogger(__name__)
 
+# 非直播频道（点播录像/DJ串烧/春晚回放等）的特征词。这些不是真正的电视直播频道，
+# 来自某些源的点播内容混入，会稀释真正的卫视/央视频道，需在解析阶段过滤。
+JUNK_NAME_KEYWORDS = (
+    "春晚", "DJ", "串烧", "伤感", "情歌", "舞曲", "车载", "精选", "火爆",
+    "爆红", "动感", "网络火爆", "伤感情歌", "演唱会", "MV版", "年版",
+    "卡啦OK", "卡拉OK", "点播", "回看", "回放", "点播影院",
+)
+# 形如 "1987年春晚" "2018精选" 这类以年份开头的录像
+_YEAR_RECORDING_RE = re.compile(r"^(19|20)\d{2}\s*年")
+
+
+def _is_junk_channel(name: str) -> bool:
+    """判断是否为非直播的垃圾频道（点播/DJ/录像等）。"""
+    if not name:
+        return True
+    n = name.strip()
+    # 年份开头的录像（如 "1987年春晚"）
+    if _YEAR_RECORDING_RE.match(n):
+        return True
+    # 含 DJ/串烧/春晚等关键词
+    low = n.lower()
+    return any(kw in n or kw.lower() in low for kw in JUNK_NAME_KEYWORDS)
+
+
 # Pattern for EXTINF line: #EXTINF:-1 tvg-name="xxx" tvg-logo="xxx" group-title="xxx",Channel Name
 EXTINF_PATTERN = re.compile(
     r'#EXTINF:[-.\d]+\s*'
@@ -66,13 +90,17 @@ def parse_m3u(content: str, source: str = "") -> List[ChannelEntry]:
             if i < len(lines):
                 url = lines[i].strip()
                 if url and not url.startswith("#"):
-                    entries.append(ChannelEntry(
-                        name=channel_name,
-                        url=url,
-                        group=group_title,
-                        logo=tvg_logo,
-                        source=source,
-                    ))
+                    # 过滤非直播频道（DJ/春晚录像等点播内容）
+                    if _is_junk_channel(channel_name):
+                        logger.debug("Dropped junk channel: %s", channel_name)
+                    else:
+                        entries.append(ChannelEntry(
+                            name=channel_name,
+                            url=url,
+                            group=group_title,
+                            logo=tvg_logo,
+                            source=source,
+                        ))
             i += 1
 
         elif line.startswith("#"):

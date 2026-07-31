@@ -35,6 +35,31 @@ function isChineseGroup(group) {
     return false;
 }
 
+// 频道名是国内的特征（CCTV/卫视/各省名等），即使 group 是英文也算国内
+const DOMESTIC_NAME_KEYWORDS = [
+    'CCTV', '央视', '卫视', 'CGTN',
+    '北京', '上海', '天津', '重庆', '湖南', '浙江', '江苏', '广东', '山东',
+    '河南', '四川', '安徽', '湖北', '深圳', '福建', '东南', '广西', '云南',
+    '贵州', '河北', '山西', '陕西', '辽宁', '吉林', '黑龙江', '内蒙', '新疆',
+    '西藏', '宁夏', '青海', '甘肃', '海南', '江西', '东方', '南方',
+    '翡翠', '明珠', 'TVB', 'ViuTV', 'RTHK', '凤凰', '澳视', '港台',
+    '东森', '中天', '三立', '民视', '中视', '台视',
+];
+
+function isChineseChannel(name, group) {
+    // 1. group 含中文 → 国内
+    if (isChineseGroup(group)) return true;
+    // 2. 频道名含国内关键字 → 国内（即使 group 是英文如 News/General）
+    if (name) {
+        for (const kw of DOMESTIC_NAME_KEYWORDS) {
+            if (name.includes(kw)) return true;
+        }
+        // 频道名含中文字符 → 国内
+        if (/[\u4e00-\u9fff]/.test(name)) return true;
+    }
+    return false;
+}
+
 function isInternationalGroup(group) {
     if (!group) return false;
     if (INTERNATIONAL_GROUPS.has(group)) return true;
@@ -43,8 +68,9 @@ function isInternationalGroup(group) {
     return false;
 }
 
-function classifyRegion(group) {
-    if (isChineseGroup(group)) return 'domestic';
+function classifyRegion(group, name) {
+    // 优先看频道名+分组综合判断（修复：国内频道 group 是英文时不再误判国外）
+    if (isChineseChannel(name || '', group)) return 'domestic';
     if (isInternationalGroup(group)) return 'international';
     return 'unknown';
 }
@@ -60,6 +86,8 @@ const state = {
     isLoading: false,
     retryCount: 0,
     maxRetries: 3,
+    sourceTriedCount: 0,    // 本轮已尝试的源数（防止全死时无限循环换源）
+    loadTimeout: null,      // 加载超时计时器（超时自动换源，防永久转圈）
     hls: null,
     videoEl: null,
     tabMode: 'all',         // 'all' | 'healthy' | 'fav'
@@ -252,11 +280,20 @@ const dom = {
     regionDomestic: $('#region-domestic'),
     regionInternational: $('#region-international'),
     volumeOsd: $('#volume-osd'),
+    sourceOsd: $('#source-osd'),
+    sourceOsdText: $('#source-osd-text'),
+    sourceOsdSub: $('#source-osd-sub'),
+    signalBadge: $('#signal-badge'),
+    signalBars: $('#signal-bars'),
+    signalSource: $('#signal-source'),
+    signalStatus: $('#signal-status'),
+    signalBitrate: $('#signal-bitrate'),
     toast: $('#toast'),
     sidebar: $('#sidebar'),
     videoContainer: $('#video-container'),
     playerArea: $('#player-area'),
     searchInput: $('#search-input'),
+    menuToggle: $('#menu-toggle'),   // 常驻菜单按钮（电脑/手机）
     // 控制栏
     playerControls: $('#player-controls'),
     controlsChannelName: $('#controls-channel-name'),
@@ -297,9 +334,24 @@ function closeSidebar() {
 
 function resetSidebarTimer() {
     clearTimeout(state.sidebarTimer);
-    state.sidebarTimer = setTimeout(() => {
-        if (state.sidebarOpen) closeSidebar();
-    }, 3000);
+    // 电视盒子：自动隐藏（无鼠标，避免遮挡画面）；电脑/手机：保持打开（有鼠标/触摸）
+    if (isTvDevice()) {
+        state.sidebarTimer = setTimeout(() => {
+            if (state.sidebarOpen) closeSidebar();
+        }, 4000);
+    }
+}
+
+/** 粗略判断是否电视盒子：有 dpad 且无触屏/无鼠标 → 电视盒子。 */
+function isTvDevice() {
+    // 触屏设备（手机/平板）一定不是 TV
+    if ('ontouchstart' in window && navigator.maxTouchPoints > 0) return false;
+    // 窄屏（手机）不是 TV
+    if (window.innerWidth <= 768) return false;
+    // 桌面有鼠标精准指针 → 当作桌面，不自动隐藏
+    if (window.matchMedia && window.matchMedia('(pointer: fine)').matches) return false;
+    // 其余（无触屏 + 无精准指针，如 TV 盒子的遥控器）当作电视盒子
+    return true;
 }
 
 // ── Controls bar management ──────────────────────────
@@ -496,11 +548,11 @@ async function refreshHealth() {
 function applyFiltersAndRender() {
     let list = state.allChannels.slice();
 
-    // 1. 区域过滤
+    // 1. 区域过滤（同时看 group 和 name，避免国内频道因 group 英文被误判国外）
     if (state.regionMode === 'domestic') {
-        list = list.filter(ch => classifyRegion(ch.group) === 'domestic' || classifyRegion(ch.group) === 'unknown');
+        list = list.filter(ch => classifyRegion(ch.group, ch.name) === 'domestic' || classifyRegion(ch.group, ch.name) === 'unknown');
     } else if (state.regionMode === 'international') {
-        list = list.filter(ch => classifyRegion(ch.group) === 'international');
+        list = list.filter(ch => classifyRegion(ch.group, ch.name) === 'international');
     }
 
     // 2. Tab 过滤
@@ -528,13 +580,17 @@ function applyFiltersAndRender() {
 
 // ── Playback ────────────────────────────────────────────
 
-function playChannel(index) {
+function playChannel(index, isSourceSwitch = false) {
     if (!state.channels.length || index < 0 || index >= state.channels.length) return;
 
     const ch = state.channels[index];
     state.activeIndex = index;
     state.focusIndex = index;
     state.retryCount = 0;
+    // 仅用户主动切台时重置已尝试源数；换源路径(isSourceSwitch)保留计数以正确终止
+    if (!isSourceSwitch) {
+        state.sourceTriedCount = 0;
+    }
 
     if (!ch.url) {
         showOverlay('error', '频道无可用源', '请切换到其他频道');
@@ -547,6 +603,16 @@ function playChannel(index) {
     updateControlsInfo(ch);
     state.isLoading = true;
     renderChannelList();
+
+    // 显示源状态 OSD（让用户知道正在尝试第几个源）
+    const totalSources = (ch.sources || []).length;
+    const curIdx = (ch.active_source_index || 0) + 1;
+    updateSourceOsd(`📡 源 ${curIdx}/${totalSources}`, ch.name);
+    // 信号指示器：连接中
+    updateSignalBadge('connecting');
+
+    // 加载超时保护：12秒内未开始播放就切备用源（防卡死源永久转圈）
+    startLoadTimeout();
 
     // 显示频道号
     showChannelNumber(index);
@@ -584,12 +650,24 @@ function startHls(url, ch) {
         backbufferLength: 30,
         maxBufferLength: 30,
         maxMaxBufferLength: 60,
+        // 超时 10 秒：给响应慢的好源足够时间，超时后再切下一个备用源
         manifestLoadingTimeOut: 10000,
         levelLoadingTimeOut: 10000,
         fragLoadingTimeOut: 10000,
     });
 
+    // 同一源只试 1 次，失败立即切下一个备用源（快速切源优先，不等待）
+    let networkRetryCount = 0;
+    const MAX_NETWORK_RETRY = 1;
+
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        // manifest 解析成功 → 清除加载超时（说明源是活的）
+        clearLoadTimeout();
+        // 信号指示器：已连接，显示码率
+        const bitrate = hls.levels && hls.levels.length > 0
+            ? Math.round((hls.levels[hls.currentLevel >= 0 ? hls.currentLevel : 0] || {}).bitrate / 1000 || 0)
+            : 0;
+        updateSignalBadge('connected', bitrate);
         if (hls.levels.length > 1) {
             hls.currentLevel = -1;
         }
@@ -601,7 +679,20 @@ function startHls(url, ch) {
             console.error('HLS fatal error:', data.type, data.details);
             switch (data.type) {
                 case Hls.ErrorTypes.NETWORK_ERROR:
-                    hls.startLoad();
+                    // 网络错误（源连不上）：有限重试，超过次数就切备用源
+                    // （原代码无限 startLoad 同一个死源 → "一直加载"的根因）
+                    networkRetryCount++;
+                    if (networkRetryCount <= MAX_NETWORK_RETRY) {
+                        console.log('Network retry', networkRetryCount);
+                        hls.startLoad();
+                    } else {
+                        // 显示"源 X 不可用，切换中"让用户知道卡在哪
+                        const curSrc = (state.channels[state.activeIndex].active_source_index || 0) + 1;
+                        const total = state.channels[state.activeIndex].sources.length;
+                        updateSourceOsd(`⚠️ 源 ${curSrc}/${total} 不可用`, '正在切换下一个源...');
+                        destroyPlayer();
+                        trySwitchSource();
+                    }
                     break;
                 case Hls.ErrorTypes.MEDIA_ERROR:
                     hls.recoverMediaError();
@@ -614,11 +705,12 @@ function startHls(url, ch) {
         }
     });
 
-    // 码率/网速监控
+    // 码率/网速监控 → 同步更新信号指示器
     hls.on(Hls.Events.LEVEL_LOADED, (_, data) => {
         if (hls.levels && hls.levels[data.level]) {
             state.lastSpeedKbps = Math.round((hls.levels[data.level].bitrate || 0) / 1000);
             updateSpeedDisplay();
+            updateSignalBadge('connected', state.lastSpeedKbps);
         }
     });
 
@@ -630,6 +722,7 @@ function startHls(url, ch) {
                 const speedBps = (stats.total * 8) / duration;
                 state.lastSpeedKbps = Math.round(speedBps / 1000);
                 updateSpeedDisplay();
+                updateSignalBadge('connected', state.lastSpeedKbps);
             }
         }
     });
@@ -641,6 +734,7 @@ function startHls(url, ch) {
 }
 
 function destroyPlayer() {
+    clearLoadTimeout();
     if (state.hls) {
         state.hls.destroy();
         state.hls = null;
@@ -650,6 +744,113 @@ function destroyPlayer() {
     clearInterval(state.speedMeasureInterval);
 }
 
+/** 启动加载超时：12秒内未开始播放就判定源不可用，自动切下一个备用源。 */
+function startLoadTimeout() {
+    clearLoadTimeout();
+    state.loadTimeout = setTimeout(() => {
+        if (state.isLoading) {
+            console.warn('Load timeout (12s), switching source...');
+            destroyPlayer();
+            trySwitchSource();
+        }
+    }, 12000);
+}
+
+/** 清除加载超时（源成功开始播放时调用）。 */
+function clearLoadTimeout() {
+    if (state.loadTimeout) {
+        clearTimeout(state.loadTimeout);
+        state.loadTimeout = null;
+    }
+}
+
+// ── 信号状态指示器（常驻右上角，显示源序号/连接状态/码率/信号格）──
+
+/** 更新信号状态指示器。
+ * status: 'connecting' | 'connected' | 'reconnecting' | 'error'
+ * bitrateKbps: 码率（可选）
+ */
+function updateSignalBadge(status, bitrateKbps) {
+    if (!dom.signalBadge) return;
+    dom.signalBadge.classList.remove('hidden');
+
+    // 源序号
+    const ch = state.channels[state.activeIndex];
+    if (ch && dom.signalSource) {
+        const idx = (ch.active_source_index || 0) + 1;
+        const total = (ch.sources || []).length;
+        dom.signalSource.textContent = '源 ' + idx + '/' + total;
+    }
+
+    // 状态文字 + 颜色
+    const statusMap = {
+        connecting: { text: '连接中', cls: 'sig-connecting' },
+        connected: { text: '已连接', cls: 'sig-connected' },
+        reconnecting: { text: '重连中', cls: 'sig-connecting' },
+        buffering: { text: '缓冲中', cls: 'sig-connecting' },
+        error: { text: '信号差', cls: 'sig-error' },
+    };
+    const s = statusMap[status] || statusMap.connecting;
+    if (dom.signalStatus) {
+        dom.signalStatus.textContent = s.text;
+        dom.signalStatus.className = 'signal-status ' + s.cls;
+    }
+
+    // 码率
+    if (dom.signalBitrate) {
+        if (bitrateKbps && bitrateKbps > 0) {
+            dom.signalBitrate.textContent = bitrateKbps > 1000
+                ? (bitrateKbps / 1000).toFixed(1) + ' Mbps'
+                : bitrateKbps + ' Kbps';
+        } else {
+            dom.signalBitrate.textContent = '';
+        }
+    }
+
+    // 信号格（根据码率/状态决定亮几格）
+    updateSignalBars(status, bitrateKbps);
+}
+
+/** 根据码率/状态更新信号格数量（1-4格）。 */
+function updateSignalBars(status, bitrateKbps) {
+    if (!dom.signalBars) return;
+    const bars = dom.signalBars.querySelectorAll('.bar');
+    let level = 0;
+    if (status === 'connected' && bitrateKbps) {
+        if (bitrateKbps >= 4000) level = 4;       // 4K/超清
+        else if (bitrateKbps >= 2000) level = 3;  // 高清
+        else if (bitrateKbps >= 800) level = 2;   // 标清
+        else level = 1;                            // 流畅
+    } else if (status === 'connecting' || status === 'reconnecting' || status === 'buffering') {
+        level = 1;  // 连接中亮1格（闪烁）
+    }
+    bars.forEach((bar, i) => {
+        bar.classList.toggle('active', i < level);
+        bar.classList.toggle('pulse', status === 'connecting' || status === 'reconnecting');
+    });
+}
+
+/** 隐藏信号指示器。 */
+function hideSignalBadge() {
+    if (dom.signalBadge) dom.signalBadge.classList.add('hidden');
+}
+
+/** 更新源状态 OSD（让用户看到"正在尝试源 1/5"、"源1不可用，切换中"等）。 */
+function updateSourceOsd(text, sub = '') {
+    if (!dom.sourceOsd || !dom.sourceOsdText) return;
+    dom.sourceOsdText.textContent = text;
+    if (dom.sourceOsdSub) dom.sourceOsdSub.textContent = sub;
+    dom.sourceOsd.classList.remove('hidden');
+    dom.sourceOsd.classList.add('show');
+}
+
+/** 隐藏源状态 OSD（播放成功后调用）。 */
+function hideSourceOsd() {
+    if (!dom.sourceOsd) return;
+    dom.sourceOsd.classList.remove('show');
+    dom.sourceOsd.classList.add('hidden');
+}
+
 function trySwitchSource() {
     const ch = state.channels[state.activeIndex];
     if (!ch) return;
@@ -657,21 +858,39 @@ function trySwitchSource() {
     const currentIdx = ch.active_source_index || 0;
     const sources = ch.sources || [];
 
+    // 终止条件：已尝试的源数 >= 总源数 → 所有源都不可用，停止换源避免无限循环
+    state.sourceTriedCount++;
+    if (state.sourceTriedCount >= sources.length) {
+        showOverlay('error', '所有源均不可用', '请切换到其他频道');
+        hideSourceOsd();
+        state.isLoading = false;
+        return;
+    }
+
     if (sources.length <= 1) {
         showOverlay('error', '播放失败', '该频道暂无可用源');
+        hideSourceOsd();
         state.isLoading = false;
         return;
     }
 
     const nextIdx = (currentIdx + 1) % sources.length;
-    showOverlay('loading', '正在切换备用源...', ch.name);
+    // 显示"切换到源 X/N"让用户知道正在换源
+    updateSourceOsd(`🔄 切换到源 ${nextIdx + 1}/${sources.length} (尝试 ${state.sourceTriedCount}/${sources.length})`, ch.name);
+    showOverlay('loading', `正在切换源 ${nextIdx + 1}/${sources.length}...`, ch.name);
+    // 信号指示器：重连中
+    updateSignalBadge('reconnecting');
 
     if (state.mode === 'json') {
         ch.active_source_index = nextIdx;
         ch.url = sources[nextIdx];
-        const idx = state.activeIndex;
-        state.channels[idx] = ch;
-        setTimeout(() => playChannel(idx), 500);
+        // 同步更新 allChannels 里对应的频道（ch 是引用，state.channels[idx] 已是 ch，无需重赋值）
+        const allIdx = state.allChannels.findIndex(c => c.name === ch.name);
+        if (allIdx >= 0) {
+            state.allChannels[allIdx].active_source_index = nextIdx;
+            state.allChannels[allIdx].url = sources[nextIdx];
+        }
+        setTimeout(() => playChannel(state.activeIndex, true), 500);
         return;
     }
 
@@ -684,14 +903,16 @@ function trySwitchSource() {
                 const updated = await resp.json();
                 const idx = state.activeIndex;
                 state.channels[idx] = updated;
-                playChannel(idx);
+                playChannel(idx, true);
             } else {
                 showOverlay('error', '无更多备用源', '所有源均不可用');
+                hideSourceOsd();
                 state.isLoading = false;
             }
         })
         .catch(() => {
             showOverlay('error', '切换失败', '无法连接服务器');
+            hideSourceOsd();
             state.isLoading = false;
         });
 }
@@ -720,11 +941,15 @@ function switchToSource(sourceIndex) {
 
 function handlePlayError(err) {
     console.error('Playback error:', err);
+    // 不再调用 trySwitchSource（HLS 错误处理已负责换源），
+    // 这里只处理 native 播放的瞬时错误，直接重试当前频道而非换源，避免与 HLS 错误叠加死循环。
     state.retryCount++;
     if (state.retryCount <= state.maxRetries) {
-        setTimeout(() => trySwitchSource(), 1000);
+        setTimeout(() => playChannel(state.activeIndex), 1000);
     } else {
         showOverlay('error', '播放失败', '已达到最大重试次数');
+        hideSourceOsd();
+        updateSignalBadge('error');
         state.isLoading = false;
     }
 }
@@ -981,6 +1206,13 @@ function setupNavigation() {
             case 'I':
                 toggleInfoPanel();
                 break;
+            // 电脑快捷键：M 打开/关闭频道菜单（电脑用户的主要入口）
+            case 'm':
+            case 'M':
+                e.preventDefault();
+                if (state.sidebarOpen) closeSidebar();
+                else openSidebar();
+                break;
         }
     });
 
@@ -999,6 +1231,12 @@ function setupNavigation() {
 function changeChannel(delta) {
     const len = state.channels.length;
     if (!len) return;
+    // 侧边栏打开时：上下键只移动焦点预览（不换台，避免每按一下就 HLS 重建）
+    if (state.sidebarOpen) {
+        moveFocus(delta);
+        return;
+    }
+    // 侧边栏关闭时：上下键直接切换频道并播放
     let idx = state.activeIndex + delta;
     if (idx < 0) idx = len - 1;
     if (idx >= len) idx = 0;
@@ -1086,12 +1324,23 @@ function setupSidebar() {
         if (state.sidebarOpen) resetSidebarTimer();
     }, { passive: true });
 
-    // 点击侧边栏外部关闭（点击主区域）
+    // 点击侧边栏外部关闭（点击主区域，但排除菜单按钮本身）
     dom.playerArea.addEventListener('click', (e) => {
-        if (state.sidebarOpen && !dom.sidebar.contains(e.target)) {
+        if (state.sidebarOpen
+            && !dom.sidebar.contains(e.target)
+            && !dom.menuToggle.contains(e.target)) {
             closeSidebar();
         }
     });
+
+    // 常驻菜单按钮：电脑/手机点击打开/关闭侧边栏
+    if (dom.menuToggle) {
+        dom.menuToggle.addEventListener('click', (e) => {
+            e.stopPropagation();   // 阻止冒泡到 playerArea 的"外部点击关闭"
+            if (state.sidebarOpen) closeSidebar();
+            else openSidebar();
+        });
+    }
 }
 
 // ── Controls bar interaction ─────────────────────────
@@ -1231,6 +1480,10 @@ function setupSearch() {
 function setupVideoEvents() {
     dom.video.addEventListener('playing', () => {
         hideOverlay();
+        clearLoadTimeout();       // 已开始播放，取消超时保护
+        hideSourceOsd();          // 播放成功，隐藏源状态 OSD
+        // 信号指示器：已连接，持续显示码率
+        updateSignalBadge('connected', state.lastSpeedKbps);
         state.isLoading = false;
         state.isPlaying = true;
         updateControlsInfo(state.channels[state.activeIndex] || {});
@@ -1251,10 +1504,12 @@ function setupVideoEvents() {
 
     dom.video.addEventListener('waiting', () => {
         state.isLoading = true;
+        updateSignalBadge('buffering', state.lastSpeedKbps);
     });
 
     dom.video.addEventListener('stalled', () => {
         state.isLoading = true;
+        updateSignalBadge('buffering', state.lastSpeedKbps);
     });
 
     dom.video.addEventListener('error', () => {
@@ -1274,7 +1529,7 @@ function setupVideoEvents() {
 }
 
 function setupRetry() {
-    dom.retryBtn.addEventListener('click', retryPlayback);
+    // retryBtn 已在 setupNavigation 中绑定，这里不再重复绑定（避免点击触发两次）
 }
 
 function retryPlayback() {

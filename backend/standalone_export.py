@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from backend.crawlers.github_crawler import GitHubM3uCrawler
 from backend.crawlers.base import ChannelEntry
 from backend.crawlers.normalize import normalize_channel_name, display_name_for
+from backend.crawlers.classify import classify_channel, sort_key_domestic_first
 from backend.exporter import detect_region
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -38,6 +39,12 @@ EXPORT_VERSION = 1
 M3U_SOURCES = [
     # ── 国内综合（央视 + 卫视 + 地方台）──────────────────────
     "https://raw.githubusercontent.com/bestK/iptv/main/iptv.m3u",
+    # best-fan — 每日检测, 425+ 频道, 源时效性好
+    "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_all.m3u8",
+    # cs3306 — 40+ 公开源聚合 + ffprobe 检测, 8000+ 频道
+    "https://raw.githubusercontent.com/cs3306/IPTV-Sources/main/data/output/iptv_collection.m3u",
+    # imtinge — 每日更新两次 + 测速筛选, ipv4 央视/卫视
+    "https://raw.githubusercontent.com/imtinge/iptv-api/master/output/ipv4/result.m3u",
     "https://raw.githubusercontent.com/BurningC4/Chinese-IPTV/master/TV-IPV4.m3u",
     "https://live.zbds.top/tv/iptv4.m3u",
     "https://raw.githubusercontent.com/CCSH/IPTV/refs/heads/main/live.m3u",
@@ -54,7 +61,7 @@ M3U_SOURCES = [
     "https://iptv-org.github.io/iptv/countries/tw.m3u",
 ]
 
-MAX_SOURCES_PER_CHANNEL = 5
+MAX_SOURCES_PER_CHANNEL = 8  # 应对源失效快：每频道保留更多备用源，一个挂了还有的用
 
 
 def build_channel_list(entries: List[ChannelEntry]) -> List[Dict[str, Any]]:
@@ -93,7 +100,26 @@ def build_channel_list(entries: List[ChannelEntry]) -> List[Dict[str, Any]]:
             "region": detect_region(primary.group or "未分类", display),
         })
 
-    return channels
+    # 国内优先排序：国内(cn) → 港澳台(hkmt) → 国外(foreign)
+    channels.sort(key=lambda ch: sort_key_domestic_first(ch["name"], ch["group"]))
+
+    # 限制国外频道比例：最多保留 25% 国外（国内+港澳台占 ≥75%）
+    max_foreign = max(50, int(len(channels) * 0.25))
+    result = []
+    foreign_count = 0
+    for ch in channels:
+        region = classify_channel(ch["name"], ch["group"])
+        if region == "foreign":
+            if foreign_count >= max_foreign:
+                continue  # 跳过多余国外频道
+            foreign_count += 1
+        result.append(ch)
+
+    # 重新编号
+    for i, ch in enumerate(result):
+        ch["id"] = i + 1
+
+    return result
 
 
 def _check_one_source(url: str, timeout: int) -> Tuple[str, bool, Optional[float]]:

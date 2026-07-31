@@ -47,6 +47,9 @@
     <!-- ── Player Area ──────────────────────────────── -->
     <main class="player-area" id="player-area">
 
+        <!-- 常驻菜单按钮（电脑/手机点击打开频道列表；电视盒子用 OK 键） -->
+        <button class="menu-toggle" id="menu-toggle" aria-label="频道列表">☰</button>
+
         <!-- Video container -->
         <div class="video-container" id="video-container">
             <video id="video-player" playsinline autoplay></video>
@@ -95,6 +98,26 @@
                 <div class="vol-label">🔊 音量</div>
                 <div class="vol-bar"><div class="vol-fill"></div></div>
                 <div class="vol-pct">50%</div>
+            </div>
+
+            <!-- Source status OSD（显示当前源序号/切换状态，让用户知道卡在哪） -->
+            <div class="source-osd hidden" id="source-osd">
+                <div class="source-osd-icon">📡</div>
+                <div class="source-osd-text" id="source-osd-text">正在连接...</div>
+                <div class="source-osd-sub" id="source-osd-sub"></div>
+            </div>
+
+            <!-- 常驻信号状态指示器（右上角，显示源序号/连接状态/码率/信号格） -->
+            <div class="signal-badge hidden" id="signal-badge">
+                <div class="signal-bars" id="signal-bars">
+                    <span class="bar"></span><span class="bar"></span>
+                    <span class="bar"></span><span class="bar"></span>
+                </div>
+                <div class="signal-info">
+                    <span class="signal-source" id="signal-source">源 1</span>
+                    <span class="signal-status" id="signal-status">连接中</span>
+                    <span class="signal-bitrate" id="signal-bitrate"></span>
+                </div>
             </div>
 
             <!-- Overlay states -->

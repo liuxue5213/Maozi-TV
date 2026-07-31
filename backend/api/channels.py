@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from ..database import Channel, SessionLocal, SourceCheckLog
 from ..source_manager import SourceManager
-from ..exporter import export_channels
+from ..exporter import export_channels, detect_region
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,7 @@ class ChannelOut(BaseModel):
     healthy: bool
     last_response_time: Optional[float] = None
     visible: bool
+    region: str = "international"
 
     class Config:
         from_attributes = True
@@ -52,6 +53,7 @@ class SummaryOut(BaseModel):
 @router.get("/channels", response_model=List[ChannelOut])
 def list_channels(
     group: Optional[str] = Query(None, description="Filter by group name"),
+    region: Optional[str] = Query(None, description="Filter by region: domestic or international"),
     visible_only: bool = Query(True, description="Only show visible channels"),
     healthy_only: bool = Query(False, description="Only show healthy channels"),
 ):
@@ -67,7 +69,10 @@ def list_channels(
             query = query.filter(Channel.group_name == group)
 
         channels = query.order_by(Channel.group_name, Channel.name).all()
-        return [ch.to_dict() for ch in channels]
+        result = [ch.to_dict() for ch in channels]
+        if region:
+            result = [ch for ch in result if ch.get("region") == region]
+        return result
     finally:
         db.close()
 
@@ -98,6 +103,27 @@ def list_groups(
             for name, ch_list in groups.items()
         ]
         return result
+    finally:
+        db.close()
+
+
+@router.get("/channels/regions")
+def get_regions(
+    visible_only: bool = Query(True, description="Only count visible channels"),
+):
+    """Get channel counts grouped by region (domestic / international)."""
+    db = SessionLocal()
+    try:
+        query = db.query(Channel)
+        if visible_only:
+            query = query.filter(Channel.visible == True)
+
+        channels = query.all()
+        counts = {"domestic": 0, "international": 0}
+        for ch in channels:
+            r = detect_region(ch.group_name, ch.name)
+            counts[r] = counts.get(r, 0) + 1
+        return counts
     finally:
         db.close()
 

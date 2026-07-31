@@ -19,6 +19,7 @@ from .checker import check_source
 from .crawlers.base import ChannelEntry
 from .crawlers.github_crawler import GitHubM3uCrawler
 from .crawlers.normalize import normalize_channel_name, display_name_for
+from .crawlers.classify import classify_channel, sort_key_domestic_first
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +132,20 @@ class SourceManager:
             db.commit()
             return ch
 
+    @staticmethod
+    def _apply_domestic_first_order(db) -> None:
+        """将国内频道排到列表前面（按 id 重排）。
+
+        网页端和 APP 按 id 顺序展示频道列表，国内优先确保用户先看到国内频道。
+        排序：国内(cn) → 港澳台(hkmt) → 国外(foreign)。
+        """
+        from .database import Channel
+        channels = db.query(Channel).filter(Channel.visible == True).all()
+        channels.sort(key=lambda ch: sort_key_domestic_first(ch.name, ch.group_name))
+        for i, ch in enumerate(channels):
+            ch.id = i + 1
+        db.commit()
+
     def _merge_into_db(self, entries: List[ChannelEntry]) -> int:
         """Merge crawled entries into the database.
 
@@ -224,6 +239,10 @@ class SourceManager:
                                  display, len(urls[:config.max_sources_per_channel]))
 
             db.commit()
+
+            # 国内优先排序：让国内频道排在前面（网页/APP 列表展示用）
+            self._apply_domestic_first_order(db)
+
             return new_count
         finally:
             db.close()

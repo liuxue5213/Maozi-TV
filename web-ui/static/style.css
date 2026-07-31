@@ -748,6 +748,56 @@ html, body {
     text-align: right;
 }
 
+/* ── Source status OSD（源切换状态提示）────────────────── */
+
+.source-osd {
+    position: absolute;
+    top: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-12px);
+    background: rgba(0, 0, 0, 0.82);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 28px;
+    z-index: 35;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    opacity: 0;
+    transition: opacity 0.25s, transform 0.25s;
+    pointer-events: none;
+    text-align: center;
+    max-width: 90%;
+}
+
+.source-osd.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+
+.source-osd-icon {
+    font-size: 22px;
+    flex-shrink: 0;
+}
+
+.source-osd-text {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+}
+
+.source-osd-sub {
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+/* 源不可用时的警告色调 */
+.source-osd .source-osd-text {
+    transition: color 0.2s;
+}
+
 /* ── Toast (favorite / refresh feedback) ──────────────── */
 
 .toast {
@@ -772,6 +822,91 @@ html, body {
 .toast.show {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
+}
+
+/* ── 信号状态指示器（常驻右上角）─────────────────────── */
+
+.signal-badge {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    z-index: 35;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 6px 14px;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    transition: opacity 0.3s;
+}
+
+.signal-badge.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* 信号格 */
+.signal-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 16px;
+}
+
+.signal-bars .bar {
+    width: 3px;
+    background: var(--border);
+    border-radius: 1px;
+    transition: background 0.3s, height 0.3s;
+}
+
+.signal-bars .bar:nth-child(1) { height: 4px; }
+.signal-bars .bar:nth-child(2) { height: 7px; }
+.signal-bars .bar:nth-child(3) { height: 10px; }
+.signal-bars .bar:nth-child(4) { height: 13px; }
+
+.signal-bars .bar.active { background: var(--success); }
+.signal-bars .bar.pulse { animation: sigPulse 1s ease-in-out infinite; }
+
+@keyframes sigPulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
+}
+
+/* 信号差时变红 */
+.signal-bars .bar.active.sig-error { background: var(--danger); }
+
+/* 信号信息文字 */
+.signal-info {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    line-height: 1.1;
+}
+
+.signal-source {
+    font-size: 11px;
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.signal-status {
+    font-size: 9px;
+    color: var(--text-secondary);
+    transition: color 0.3s;
+}
+
+.signal-status.sig-connecting { color: var(--warning); }
+.signal-status.sig-connected { color: var(--success); }
+.signal-status.sig-error { color: var(--danger); }
+
+.signal-bitrate {
+    font-size: 9px;
+    color: var(--accent);
+    font-weight: 500;
 }
 
 /* ── Mobile adjustments ──────────────────────────────── */
@@ -809,4 +944,46 @@ html, body {
 
 .hidden {
     display: none !important;
+}
+
+/* ── 常驻菜单按钮（电脑/手机打开频道列表的入口）──────── */
+
+.menu-toggle {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    z-index: 120;
+    width: 44px;
+    height: 44px;
+    background: rgba(0, 0, 0, 0.6);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text-primary);
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    transition: background 0.2s, transform 0.2s;
+}
+
+.menu-toggle:hover {
+    background: rgba(74, 158, 255, 0.3);
+}
+
+.menu-toggle:active {
+    transform: scale(0.92);
+}
+
+@media (max-width: 768px) {
+    .menu-toggle {
+        top: 12px;
+        left: 12px;
+        width: 40px;
+        height: 40px;
+        font-size: 20px;
+    }
 }

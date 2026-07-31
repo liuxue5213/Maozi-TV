@@ -92,6 +92,7 @@ class Channel(Base):
         return sources[new_idx]
 
     def to_dict(self) -> Dict:
+        from .exporter import detect_region
         return {
             "id": self.id,
             "name": self.name,
@@ -103,6 +104,7 @@ class Channel(Base):
             "healthy": self.healthy,
             "last_response_time": self.last_response_time,
             "visible": self.visible,
+            "region": detect_region(self.group_name, self.name),
         }
 
 

@@ -23,6 +23,12 @@ class Config:
         # ── 国内综合（央视 + 卫视 + 地方台）──────────────────────
         # bestK/iptv — 540+ 频道, 2026年活跃更新
         "https://raw.githubusercontent.com/bestK/iptv/main/iptv.m3u",
+        # best-fan/iptv-sources — 每日检测, 425+ 频道(央视/地方分类), 源时效性好
+        "https://raw.githubusercontent.com/best-fan/iptv-sources/main/cn_all.m3u8",
+        # cs3306/IPTV-Sources — 40+ 公开源聚合 + ffprobe 检测, 8000+ 频道
+        "https://raw.githubusercontent.com/cs3306/IPTV-Sources/main/data/output/iptv_collection.m3u",
+        # imtinge/iptv-api — 每日更新两次 + 测速筛选, ipv4 央视/卫视
+        "https://raw.githubusercontent.com/imtinge/iptv-api/master/output/ipv4/result.m3u",
         # BurningC4 Chinese-IPTV — IPv4 央视列表
         "https://raw.githubusercontent.com/BurningC4/Chinese-IPTV/master/TV-IPV4.m3u",
         # vbskycn/iptv — IPv4 自动扫描源 (CDN加速), 每 6 小时更新

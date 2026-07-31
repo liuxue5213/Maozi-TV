@@ -76,6 +76,7 @@ public class MainActivity extends AppCompatActivity {
     private static final String KEY_CACHED_TS = "cached_generated_ts";
     private static final String KEY_MODE = "mode";
     private static final String KEY_FAVORITES = "favorites"; // 收藏频道 ID 集合
+    private static final String KEY_LAST_CHANNEL = "last_channel_id"; // 上次播放的频道 ID
     private static final String DEFAULT_SERVER_URL = "http://192.168.1.100:8000";
 
     // ── 视图 ────────────────────────────────────────────────
@@ -130,6 +131,8 @@ public class MainActivity extends AppCompatActivity {
     // ── 源切换重试 ──────────────────────────────────────────
     private static final int MAX_RETRY_COUNT = 3;
     private int retryCount = 0;
+    // OK 键长按判定标志（isLongPress() 在 KEY_UP 上不可靠，用手动标志）
+    private boolean okLongPressed = false;
 
     // ── 音量 ────────────────────────────────────────────────
     private AudioManager audioManager;
@@ -340,6 +343,10 @@ public class MainActivity extends AppCompatActivity {
         channel.currentSourceIndex = 0;
         playUrl(channel.getCurrentSourceUrl());
 
+        // 记住上次播放的频道，下次启动自动恢复
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .edit().putInt(KEY_LAST_CHANNEL, channel.id).apply();
+
         // 显示频道信息叠加层
         showChannelInfo(channel);
 
@@ -464,7 +471,7 @@ public class MainActivity extends AppCompatActivity {
     // 频道数据解析
     // ══════════════════════════════════════════════════════════
 
-    private void parseChannelsJson(String jsonData) {
+    private boolean parseChannelsJson(String jsonData) {
         try {
             JSONObject root = new JSONObject(jsonData);
             JSONArray chArr = root.optJSONArray("channels");
@@ -509,9 +516,16 @@ public class MainActivity extends AppCompatActivity {
 
             Log.i(TAG, "解析完成: " + allChannels.size() + " 个频道, "
                     + groupNames.size() + " 个分组");
+            return true;
 
         } catch (Exception e) {
             Log.e(TAG, "JSON 解析失败: " + e.getMessage(), e);
+            String msg = "频道数据解析失败: " + e.getMessage();
+            mainHandler.post(() -> {
+                Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
+                showStatus("频道数据异常，请更新频道源");
+            });
+            return false;
         }
     }
 
@@ -548,9 +562,26 @@ public class MainActivity extends AppCompatActivity {
         // 隐藏加载状态
         hideStatus();
 
-        // 如果有频道，自动播放第一个
+        // 启动行为：优先恢复上次播放的频道；无记录则展示侧边栏让用户选台。
         if (!allChannels.isEmpty()) {
-            playChannel(allChannels.get(0));
+            SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+            int lastId = prefs.getInt(KEY_LAST_CHANNEL, -1);
+            Channel last = null;
+            if (lastId >= 0) {
+                for (Channel ch : allChannels) {
+                    if (ch.id == lastId) { last = ch; break; }
+                }
+            }
+            if (last != null) {
+                // 切到上次频道所在分组并播放
+                currentGroup = "全部";
+                updateChannelList();
+                groupAdapter.setSelectedPosition(0);
+                playChannel(last);
+            } else {
+                // 首次使用：展示侧边栏，不自动播放
+                showSidebar();
+            }
         }
     }
 
@@ -728,9 +759,10 @@ public class MainActivity extends AppCompatActivity {
 
                     String data = jsonData;
                     mainHandler.post(() -> {
-                        parseChannelsJson(data);
-                        updateUI();
-                        Toast.makeText(MainActivity.this, "频道已更新", Toast.LENGTH_SHORT).show();
+                        if (parseChannelsJson(data)) {
+                            updateUI();
+                            Toast.makeText(MainActivity.this, "频道已更新", Toast.LENGTH_SHORT).show();
+                        }
                     });
                 } else {
                     Log.i(TAG, "数据未变化，使用缓存");
@@ -758,9 +790,11 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         mainHandler.post(() -> {
-            parseChannelsJson(cachedJson);
-            updateUI();
-            Toast.makeText(MainActivity.this, "使用缓存的频道列表", Toast.LENGTH_SHORT).show();
+            if (parseChannelsJson(cachedJson)) {
+                updateUI();
+                Toast.makeText(MainActivity.this, "使用缓存的频道列表", Toast.LENGTH_SHORT).show();
+            }
+        });
         });
     }
 
@@ -907,6 +941,7 @@ public class MainActivity extends AppCompatActivity {
             case KeyEvent.KEYCODE_DPAD_CENTER:
             case KeyEvent.KEYCODE_ENTER:
                 if (event.getRepeatCount() == 0) {
+                    okLongPressed = false;   // 重置长按标志
                     event.startTracking();
                 }
                 return true;
@@ -953,6 +988,7 @@ public class MainActivity extends AppCompatActivity {
         // 长按 OK/Enter → 收藏/取消收藏
         if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER
                 || keyCode == KeyEvent.KEYCODE_ENTER) {
+            okLongPressed = true;   // 标记已长按，防止 onKeyUp 误触发短按
             if (currentChannel != null) {
                 toggleFavorite(currentChannel);
             }
@@ -965,7 +1001,8 @@ public class MainActivity extends AppCompatActivity {
     public boolean onKeyUp(int keyCode, KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER
                 || keyCode == KeyEvent.KEYCODE_ENTER) {
-            if (!event.isLongPress()) {
+            // 用手动标志判断长按（isLongPress() 在 KEY_UP 上恒为 false）
+            if (!okLongPressed) {
                 // 短按 OK：如果侧边栏可见则播放选中频道，否则切换侧边栏
                 if (sidebarVisible) {
                     // 让 RecyclerView 自己处理焦点点击
@@ -987,18 +1024,36 @@ public class MainActivity extends AppCompatActivity {
     // ══════════════════════════════════════════════════════════
 
     private void switchChannelUp() {
-        if (allChannels.isEmpty()) return;
-        int currentIndex = allChannels.indexOf(currentChannel);
-        int newIndex = (currentIndex <= 0) ? allChannels.size() - 1 : currentIndex - 1;
-        playChannel(allChannels.get(newIndex));
+        // 用当前分组（侧边栏列表）的频道，而非全部频道，避免跨分组跳台。
+        List<Channel> list = channelAdapter.getChannels();
+        if (list.isEmpty()) return;
+        // 用 id 查找当前频道位置（比 indexOf 引用相等更稳妥）
+        int currentIndex = -1;
+        if (currentChannel != null) {
+            for (int i = 0; i < list.size(); i++) {
+                if (list.get(i).id == currentChannel.id) { currentIndex = i; break; }
+            }
+        }
+        // 当前频道不在本组（如刚切换分组），从第 0 个开始
+        if (currentIndex < 0) currentIndex = 0;
+        int newIndex = (currentIndex <= 0) ? list.size() - 1 : currentIndex - 1;
+        playChannel(list.get(newIndex));
     }
 
     private void switchChannelDown() {
-        if (allChannels.isEmpty()) return;
-        int currentIndex = allChannels.indexOf(currentChannel);
-        int newIndex = (currentIndex < 0 || currentIndex >= allChannels.size() - 1)
+        // 同上：用当前分组列表，循环切换。
+        List<Channel> list = channelAdapter.getChannels();
+        if (list.isEmpty()) return;
+        int currentIndex = -1;
+        if (currentChannel != null) {
+            for (int i = 0; i < list.size(); i++) {
+                if (list.get(i).id == currentChannel.id) { currentIndex = i; break; }
+            }
+        }
+        // 当前频道不在本组，从第 0 个开始（按下→开头）
+        int newIndex = (currentIndex < 0 || currentIndex >= list.size() - 1)
                 ? 0 : currentIndex + 1;
-        playChannel(allChannels.get(newIndex));
+        playChannel(list.get(newIndex));
     }
 
     // ══════════════════════════════════════════════════════════
@@ -1007,15 +1062,13 @@ public class MainActivity extends AppCompatActivity {
 
     private void adjustVolume(int direction) {
         if (audioManager == null) return;
-        int max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
-        int current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
-        int step = Math.max(1, max / 15); // 每次调节 1/15
-        int newVol = Math.max(0, Math.min(max, current + direction * step));
-        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVol, 0);
-
-        // 显示音量提示
-        int percent = (int) (newVol * 100.0 / max);
-        Toast.makeText(this, "音量: " + percent + "%", Toast.LENGTH_SHORT).show();
+        // 电视盒子的媒体音量通常是 STREAM_MUSIC，但部分盒子走 STREAM_SYSTEM。
+        // 优先调 STREAM_MUSIC（ExoPlayer 输出在此流），用 FLAG_SHOW_UI 让系统
+        // 弹出原生音量条，比自定义 Toast 更直观、也更广泛兼容。
+        int stream = AudioManager.STREAM_MUSIC;
+        audioManager.adjustStreamVolume(stream,
+                direction > 0 ? AudioManager.ADJUST_RAISE : AudioManager.ADJUST_LOWER,
+                AudioManager.FLAG_SHOW_UI | AudioManager.FLAG_PLAY_SOUND);
     }
 
     // ══════════════════════════════════════════════════════════

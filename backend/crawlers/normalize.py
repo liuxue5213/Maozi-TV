@@ -116,10 +116,13 @@ def normalize_channel_name(name: str) -> str:
         return ""
     # Full-width → half-width (e.g. ＣＣＴＶ１ → CCTV1, （ → (, ） → ))
     name = unicodedata.normalize("NFKC", name)
-    # 去掉画质/地区前缀方括号: [HD] [BD] [SD] [VGA] [1080p] 等
-    name = re.sub(r"\[(HD|BD|SD|VGA|FHD|UHD|4K|8K|1080p|720p|\d+p)\]", "", name, flags=re.IGNORECASE)
-    # 去掉 geo-blocked / region 等英文标记
+    # 去掉画质/地区前缀方括号: [HD] [BD] [SD] [IPv6] [Not 24/7] 等任意方括号内容
+    # （卫视源常见 [IPv6]/[Not 24/7]/[Geo-blocked] 等变体后缀，统一清理以合并）
+    name = re.sub(r"\[[^\]]*\]", "", name)
+    # 去掉 geo-blocked / region 等英文标记（无方括号的情况）
     name = re.sub(r"\[?geo-?blocked\]?", "", name, flags=re.IGNORECASE)
+    # 去掉 "Not 24/7" 等英文可用性标记
+    name = re.sub(r"not\s*24/?7", "", name, flags=re.IGNORECASE)
     # 去掉泰文/越南语等东南亚频道前缀（epg.pw 港澳台源常见 ช่อง 前缀）
     name = re.sub(r"^[\u0E00-\u0E7F\s]+", "", name)  # 泰文范围
     # 去掉 "- 线路N（大陆线路）" / "- 蓝光N" / "- 超清N" 等: 同一台的多条线路即多个源, 应合并。
@@ -164,10 +167,11 @@ def display_name_for(name: str) -> str:
     for canonical in CHANNEL_ALIASES.values():
         if canonical.lower() == folded:
             return canonical
-    # 轻量清理显示名：去 [HD]/[BD] 前缀、geo 标记、泰文前缀、线路/蓝光后缀、繁转简
+    # 轻量清理显示名：去任意方括号后缀、geo 标记、泰文前缀、线路/蓝光后缀、繁转简
     disp = unicodedata.normalize("NFKC", cleaned)
-    disp = re.sub(r"\[(HD|BD|SD|VGA|FHD|UHD|4K|8K|1080p|720p|\d+p)\]", "", disp, flags=re.IGNORECASE)
+    disp = re.sub(r"\[[^\]]*\]", "", disp)
     disp = re.sub(r"\[?geo-?blocked\]?", "", disp, flags=re.IGNORECASE)
+    disp = re.sub(r"not\s*24/?7", "", disp, flags=re.IGNORECASE)
     disp = re.sub(r"^[\u0E00-\u0E7F\s]+", "", disp)
     disp = re.sub(r"[\s\-]*线[路][\d一二三四五六七八九十]*\s*[\(（].*?[\)）]", "", disp)
     disp = re.sub(r"[\s\-]*线[路][\d一二三四五六七八九十]*", "", disp)

@@ -152,10 +152,11 @@ curl "http://localhost:8000/api/channels?visible_only=true&healthy_only=true"
 
 ## 📡 数据来源
 
-频道重心为**国内（央视/卫视/地方台）+ 港澳台**，国外频道有则保留、不强求。后端会从以下多个公开源汇总、去重、归一化合并（含繁简体/线路号/画质前缀统一），每个频道保留多个备用源并自动健康检测：
+频道重心为**国内（央视/卫视/地方台）+ 港澳台**，国外频道有则保留、不强求。后端会从以下多个公开源汇总、去重、归一化合并（含繁简体/线路号/画质前缀统一），每频道保留最多 **8 个备用源**并自动健康检测（应对源失效快：CI 每 4 小时更新 + 源挂自动切备用）：
 
 **🇨🇳 国内综合（央视 + 卫视 + 地方台）**
 - [bestK/iptv](https://github.com/bestK/iptv) — 540+ 频道，每日更新
+- [best-fan/iptv-sources](https://github.com/best-fan/iptv-sources) — **每日检测**，425+ 频道（央视/地方分类），源时效性好
 - [BurningC4/Chinese-IPTV](https://github.com/BurningC4/Chinese-IPTV) — CCTV IPv4 源
 - [vbskycn/iptv](https://github.com/vbskycn/iptv) — IPv4/IPv6 自动扫描源（每 6 小时更新）
 - [CCSH/IPTV](https://github.com/CCSH/IPTV) — 每日更新
