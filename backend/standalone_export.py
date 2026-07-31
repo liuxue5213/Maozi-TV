@@ -45,6 +45,10 @@ M3U_SOURCES = [
     "https://raw.githubusercontent.com/cs3306/IPTV-Sources/main/data/output/iptv_collection.m3u",
     # imtinge — 每日更新两次 + 测速筛选, ipv4 央视/卫视
     "https://raw.githubusercontent.com/imtinge/iptv-api/master/output/ipv4/result.m3u",
+    # sunguanghui — 1757 频道, 900+ 国内, 测速排序
+    "https://raw.githubusercontent.com/sunguanghui/TV/master/output/result.m3u",
+    # Collect-IPTV — 667 频道, 已按最佳排序的精选源
+    "https://raw.githubusercontent.com/zilong7728/Collect-IPTV/main/best_sorted.m3u",
     "https://raw.githubusercontent.com/BurningC4/Chinese-IPTV/master/TV-IPV4.m3u",
     "https://live.zbds.top/tv/iptv4.m3u",
     "https://raw.githubusercontent.com/CCSH/IPTV/refs/heads/main/live.m3u",
@@ -100,26 +104,17 @@ def build_channel_list(entries: List[ChannelEntry]) -> List[Dict[str, Any]]:
             "region": detect_region(primary.group or "未分类", display),
         })
 
-    # 国内优先排序：国内(cn) → 港澳台(hkmt) → 国外(foreign)
+    # 过滤掉所有国外频道（只保留国内+港澳台），国内优先排序
+    # 国外源在国内大多无法播放，且会淹没国内频道
+    channels = [ch for ch in channels
+                if classify_channel(ch["name"], ch["group"]) != "foreign"]
     channels.sort(key=lambda ch: sort_key_domestic_first(ch["name"], ch["group"]))
 
-    # 限制国外频道比例：最多保留 25% 国外（国内+港澳台占 ≥75%）
-    max_foreign = max(50, int(len(channels) * 0.25))
-    result = []
-    foreign_count = 0
-    for ch in channels:
-        region = classify_channel(ch["name"], ch["group"])
-        if region == "foreign":
-            if foreign_count >= max_foreign:
-                continue  # 跳过多余国外频道
-            foreign_count += 1
-        result.append(ch)
-
     # 重新编号
-    for i, ch in enumerate(result):
+    for i, ch in enumerate(channels):
         ch["id"] = i + 1
 
-    return result
+    return channels
 
 
 def _check_one_source(url: str, timeout: int) -> Tuple[str, bool, Optional[float]]:

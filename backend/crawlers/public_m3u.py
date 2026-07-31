@@ -17,18 +17,23 @@ JUNK_NAME_KEYWORDS = (
     "春晚", "DJ", "串烧", "伤感", "情歌", "舞曲", "车载", "精选", "火爆",
     "爆红", "动感", "网络火爆", "伤感情歌", "演唱会", "MV版", "年版",
     "卡啦OK", "卡拉OK", "点播", "回看", "回放", "点播影院",
+    "MV欣赏", "Music欣赏", "每日一首", "LATATA", "Uh-oh",
 )
-# 形如 "1987年春晚" "2018精选" 这类以年份开头的录像
+# 形如 "1987年春晚" "2018精选" "2026-07-14 09:59:25"（时间戳） 这类录像/自动生成
 _YEAR_RECORDING_RE = re.compile(r"^(19|20)\d{2}\s*年")
+_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}")
 
 
 def _is_junk_channel(name: str) -> bool:
-    """判断是否为非直播的垃圾频道（点播/DJ/录像等）。"""
+    """判断是否为非直播的垃圾频道（点播/DJ/录像/时间戳等）。"""
     if not name:
         return True
     n = name.strip()
     # 年份开头的录像（如 "1987年春晚"）
     if _YEAR_RECORDING_RE.match(n):
+        return True
+    # 时间戳开头的自动生成内容（如 "2026-07-14 09:59:25"）
+    if _TIMESTAMP_RE.match(n):
         return True
     # 含 DJ/串烧/春晚等关键词
     low = n.lower()

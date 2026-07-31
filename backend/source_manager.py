@@ -222,6 +222,12 @@ class SourceManager:
                             logger.info("Merged %d new sources into '%s' (total: %d)",
                                         len(added), existing.name, len(merged))
                 else:
+                    # 过滤国外频道：只保留国内(cn)和港澳台(hkmt)，国外的不入库
+                    # （源里有大量国外频道会淹没国内，且国外源大多在国内无法播放）
+                    region = classify_channel(display, primary.group or "")
+                    if region == "foreign":
+                        continue
+
                     # Create new channel
                     new_ch = Channel(
                         name=display,

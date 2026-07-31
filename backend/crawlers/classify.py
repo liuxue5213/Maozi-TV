@@ -75,20 +75,33 @@ def classify_channel(name: str, group: str = "") -> Literal["cn", "hkmt", "forei
         if kw in n or kw in g:
             return "hkmt"
 
-    # 3. 国内特征
+    # 3. 国内特征——频道名优先
     for kw in DOMESTIC_NAME_KW:
-        if kw in n or kw in g:
+        if kw in n:
             return "cn"
-    for kw in DOMESTIC_GROUP_KW:
+
+    # 4. 含足够多中文字符 → 国内（要求至少2个中文字符，避免"(勿)(址)Movie"等误判）
+    cjk_count = sum(1 for ch in n if '一' <= ch <= '鿿')
+    if cjk_count >= 2:
+        return "cn"
+
+    # 5. 频道名是纯英文/无国内特征 → 即使 group 含中文也判国外
+    #    （修复：cs3306 把国外频道归到"未分类"等中文分组，导致误判国内）
+    #    只有 group 明确是强国内分组（央视/卫视/地方台）才信 group
+    for kw in ("央视", "央视频道", "卫视", "卫视频道", "地方台", "地方频道"):
         if kw in g:
-            return "cn"
+            # 但仍要求频道名有国内特征或中文，否则 group 可能是误归
+            has_cn_name = any(k in n for k in DOMESTIC_NAME_KW) or cjk_count >= 1
+            if has_cn_name:
+                return "cn"
+            # 纯英文名归到中文分组 → 国外频道误归，判 foreign
+            return "foreign"
 
-    # 4. 含中文字符 → 大概率国内
-    for ch in n:
-        if '一' <= ch <= '鿿':
-            return "cn"
+    # 6. group 含其他中文（如"未分类"）但频道名纯英文 → 国外
+    if cjk_count == 0 and not any(k in n for k in DOMESTIC_NAME_KW):
+        return "foreign"
 
-    # 5. 默认国外（纯英文且无国内特征的）
+    # 7. 默认国外（纯英文且无国内特征的）
     return "foreign"
 
 

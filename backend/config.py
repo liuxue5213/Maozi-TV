@@ -29,6 +29,10 @@ class Config:
         "https://raw.githubusercontent.com/cs3306/IPTV-Sources/main/data/output/iptv_collection.m3u",
         # imtinge/iptv-api — 每日更新两次 + 测速筛选, ipv4 央视/卫视
         "https://raw.githubusercontent.com/imtinge/iptv-api/master/output/ipv4/result.m3u",
+        # sunguanghui/TV — 1757 频道, 900+ 国内(央视/卫视), 测速排序
+        "https://raw.githubusercontent.com/sunguanghui/TV/master/output/result.m3u",
+        # zilong7728/Collect-IPTV — 667 频道, 已按最佳排序的精选源
+        "https://raw.githubusercontent.com/zilong7728/Collect-IPTV/main/best_sorted.m3u",
         # BurningC4 Chinese-IPTV — IPv4 央视列表
         "https://raw.githubusercontent.com/BurningC4/Chinese-IPTV/master/TV-IPV4.m3u",
         # vbskycn/iptv — IPv4 自动扫描源 (CDN加速), 每 6 小时更新
