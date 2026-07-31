@@ -20,22 +20,16 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
-import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.DefaultLoadControl;
-import com.google.android.exoplayer2.ExoPlaybackException;
 import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.MediaItem;
-import com.google.android.exoplayer2.PlaybackParameters;
+import com.google.android.exoplayer2.PlaybackException;
 import com.google.android.exoplayer2.Player;
-import com.google.android.exoplayer2.SimpleExoPlayer;
 import com.google.android.exoplayer2.source.DefaultMediaSourceFactory;
-import com.google.android.exoplayer2.source.MediaSource;
-import com.google.android.exoplayer2.source.hls.HlsMediaSource;
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
 import com.google.android.exoplayer2.ui.PlayerView;
 import com.google.android.exoplayer2.upstream.DefaultBandwidthMeter;
 import com.google.android.exoplayer2.upstream.DefaultHttpDataSource;
-import com.google.android.exoplayer2.upstream.TransferListener;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -86,7 +80,7 @@ public class MainActivity extends AppCompatActivity {
 
     // ── 视图 ────────────────────────────────────────────────
     private PlayerView playerView;
-    private SimpleExoPlayer player;
+    private ExoPlayer player;
     private DefaultTrackSelector trackSelector;
     private DefaultBandwidthMeter bandwidthMeter;
 
@@ -264,7 +258,7 @@ public class MainActivity extends AppCompatActivity {
                 )
                 .build();
 
-        player = new SimpleExoPlayer.Builder(this)
+        player = new ExoPlayer.Builder(this)
                 .setTrackSelector(trackSelector)
                 .setLoadControl(loadControl)
                 .setMediaSourceFactory(mediaSourceFactory)
@@ -274,7 +268,7 @@ public class MainActivity extends AppCompatActivity {
         playerView.setPlayer(player);
 
         // 播放事件监听
-        player.addListener(new Player.EventListener() {
+        player.addListener(new Player.Listener() {
             @Override
             public void onPlaybackStateChanged(int state) {
                 if (state == Player.STATE_READY) {
@@ -286,7 +280,7 @@ public class MainActivity extends AppCompatActivity {
             }
 
             @Override
-            public void onPlayerError(@NonNull ExoPlaybackException error) {
+            public void onPlayerError(@NonNull PlaybackException error) {
                 Log.e(TAG, "播放错误: " + error.getMessage());
                 handlePlaybackError();
             }
