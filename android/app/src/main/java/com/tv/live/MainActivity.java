@@ -253,12 +253,7 @@ public class MainActivity extends AppCompatActivity {
                 .setDataSourceFactory(httpFactory);
 
         DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
-                .setBufferDurationsMs(
-                        DefaultLoadControl.MIN_BUFFER_MS,
-                        DefaultLoadControl.MAX_BUFFER_MS,
-                        DefaultLoadControl.BUFFER_FOR_PLAYBACK_MS,
-                        DefaultLoadControl.BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS
-                )
+                .setBufferDurationsMs(15000, 50000, 1500, 2000)
                 .build();
 
         player = new ExoPlayer.Builder(this)
