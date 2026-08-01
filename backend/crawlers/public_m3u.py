@@ -40,6 +40,26 @@ def _is_junk_channel(name: str) -> bool:
     return any(kw in n or kw.lower() in low for kw in JUNK_NAME_KEYWORDS)
 
 
+# 组播/不可播放 URL 的特征：浏览器无法播放，应在爬取阶段过滤
+def _is_unplayable_url(url: str) -> bool:
+    """判断 URL 是否在公网浏览器中无法播放（组播/UDP/RTSP 等）。"""
+    u = url.lower().strip()
+    # rtp:// / udp:// / rtsp:// 协议，浏览器不支持
+    if u.startswith(("rtp://", "udp://", "rtsp://", "rtmp://")):
+        return True
+    # 路径含 /rtp/ （组播转单播代理，公网通常无法访问）
+    if "/rtp/" in u:
+        return True
+    # 主机是组播地址（224.0.0.0 - 239.255.255.255）
+    import re as _re
+    m = _re.match(r"https?://(\d+)\.(\d+)\.(\d+)\.(\d+)", u)
+    if m:
+        o1 = int(m.group(1))
+        if 224 <= o1 <= 239:
+            return True
+    return False
+
+
 # Pattern for EXTINF line: #EXTINF:-1 tvg-name="xxx" tvg-logo="xxx" group-title="xxx",Channel Name
 EXTINF_PATTERN = re.compile(
     r'#EXTINF:[-.\d]+\s*'
@@ -98,6 +118,8 @@ def parse_m3u(content: str, source: str = "") -> List[ChannelEntry]:
                     # 过滤非直播频道（DJ/春晚录像等点播内容）
                     if _is_junk_channel(channel_name):
                         logger.debug("Dropped junk channel: %s", channel_name)
+                    elif _is_unplayable_url(url):
+                        logger.debug("Dropped unplayable URL: %s", url)
                     else:
                         entries.append(ChannelEntry(
                             name=channel_name,
@@ -172,3 +194,69 @@ def _infer_name_from_url(url: str) -> str:
         return m.group(1)
 
     return f"频道_{hash(url) % 10000}"
+
+
+def parse_tvbox_txt(content: str, source: str = "") -> List[ChannelEntry]:
+    """Parse TVBox txt format: "分类名,#genre#" followed by "频道名,URL" lines.
+
+    Example:
+        🇨🇳央视,#genre#
+        CCTV-1,http://...
+        CCTV-2,http://...
+        卫视,#genre#
+        湖南卫视,http://...
+    """
+    entries: List[ChannelEntry] = []
+    lines = content.splitlines()
+    current_group = "未分类"
+
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        # 分组标记: "分类名,#genre#"
+        if line.endswith("#genre#"):
+            group_name = line.replace("#genre#", "").rstrip(",").strip()
+            if group_name:
+                current_group = group_name
+            continue
+        # 频道行: "频道名,URL"
+        if "," in line:
+            # 分割第一个逗号（频道名可能含逗号的情况极少，URL 不含逗号）
+            parts = line.split(",", 1)
+            if len(parts) == 2:
+                name = parts[0].strip()
+                url = parts[1].strip()
+                if url.startswith("http") and name:
+                    if _is_junk_channel(name):
+                        logger.debug("Dropped junk channel: %s", name)
+                    elif _is_unplayable_url(url):
+                        logger.debug("Dropped unplayable URL: %s", url)
+                    else:
+                        entries.append(ChannelEntry(
+                            name=name,
+                            url=url,
+                            group=current_group,
+                            source=source,
+                        ))
+
+    # Deduplicate by URL
+    seen_urls = set()
+    deduped = []
+    for entry in entries:
+        if entry.url not in seen_urls:
+            seen_urls.add(entry.url)
+            deduped.append(entry)
+
+    logger.info("Parsed %d channels from TVBox txt (after dedup: %d)", len(entries), len(deduped))
+    return deduped
+
+
+def parse_playlist(content: str, source: str = "") -> List[ChannelEntry]:
+    """Auto-detect format and parse: m3u (#EXTM3U) or TVBox txt (#genre#)."""
+    if content.startswith("#EXTM3U") or "#EXTINF" in content[:500]:
+        return parse_m3u(content, source=source)
+    if "#genre#" in content[:2000]:
+        return parse_tvbox_txt(content, source=source)
+    # 默认用 m3u 解析（简单 URL 列表）
+    return parse_m3u(content, source=source)

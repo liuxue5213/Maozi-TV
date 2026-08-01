@@ -165,6 +165,21 @@ def health():
 from .api.channels import router as channels_router  # noqa: E402
 app.include_router(channels_router)
 
+# ── 静态文件 no-cache 中间件（避免浏览器缓存旧版 player.js）─────
+from starlette.middleware.base import BaseHTTPMiddleware  # noqa: E402
+
+class NoCacheStaticMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        resp = await call_next(request)
+        path = request.url.path
+        if path.endswith(('.js', '.css', '.html')):
+            resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+            resp.headers['Pragma'] = 'no-cache'
+            resp.headers['Expires'] = '0'
+        return resp
+
+app.add_middleware(NoCacheStaticMiddleware)
+
 # Mount static web UI — mounted last so API routes take precedence
 static_dir = os.path.join(os.path.dirname(__file__), "..", "web-ui", "static")
 static_dir = os.path.normpath(static_dir)

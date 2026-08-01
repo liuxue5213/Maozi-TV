@@ -59,6 +59,16 @@ class Config:
         # iptv-org 香港 / 台湾（精简, 作为港澳台补充）
         "https://iptv-org.github.io/iptv/countries/hk.m3u",
         "https://iptv-org.github.io/iptv/countries/tw.m3u",
+        # iptv-org 韩国 / 日本 ────────────────────────────────────
+        # iptv-org 韩国
+        "https://iptv-org.github.io/iptv/countries/kr.m3u",
+        # iptv-org 日本
+        "https://iptv-org.github.io/iptv/countries/jp.m3u",
+        # ── 国内公网源补充（最近活跃更新）─────────────────────────
+        # develop202/migu_video 咪咕视频源（央视/卫视，2026-07-30 更新，m3u 格式）
+        "https://cdn.jsdelivr.net/gh/develop202/migu_video@main/interface.txt",
+        # Supprise0901/TVBox_live（河南地方台+CCTV+卫视，TVBox txt 格式，活跃更新）
+        "https://cdn.jsdelivr.net/gh/Supprise0901/TVBox_live@main/live.txt",
     ])
 
     # Health check

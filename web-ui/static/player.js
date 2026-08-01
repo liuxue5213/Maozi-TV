@@ -3,6 +3,24 @@
 
 const API_BASE = window.location.origin;
 
+// Logo 代理 URL（避免跨域/封锁）
+function proxyLogoUrl(url) {
+    if (!url) return '';
+    // 只代理远程 URL，本地或 base64 不代理
+    if (url.startsWith('data:') || url.startsWith('/')) return url;
+    return API_BASE + '/api/proxy/logo?url=' + encodeURIComponent(url);
+}
+
+// 流代理 URL（避免跨域 / ORB 拦截 m3u8 + ts）
+// 把源 URL 包成 /api/proxy/stream?url=<encoded>，由后端转发并重写 m3u8 内部分片 URL
+function proxyStreamUrl(url) {
+    if (!url) return '';
+    // data: URL / 已经走过代理的 URL 不再二次包装
+    if (url.startsWith('data:')) return url;
+    if (url.startsWith(API_BASE + '/api/proxy/stream?url=')) return url;
+    return API_BASE + '/api/proxy/stream?url=' + encodeURIComponent(url);
+}
+
 // ── 国内/国外分组判断 ──────────────────────────────────
 
 const DOMESTIC_KEYWORDS = [
@@ -116,6 +134,12 @@ const state = {
     // 长按收藏
     longPressTimer: null,
     longPressTriggered: false,
+    // 分页渲染
+    renderedCount: 0,       // 已渲染的频道数量
+    renderBatchSize: 100,   // 每次渲染的频道数量（减小以减少初始请求数）
+    loadingMore: false,     // 是否正在加载更多
+    // Logo 懒加载观察器
+    logoObserver: null,
 };
 
 // ── Favorites (localStorage-persisted channel names) ────────
@@ -357,7 +381,6 @@ function isTvDevice() {
 // ── Controls bar management ──────────────────────────
 
 function showControls() {
-    if (!state.isPlaying) return;
     dom.playerControls.classList.remove('hidden');
     dom.playerControls.classList.add('show');
     state.controlsVisible = true;
@@ -421,43 +444,74 @@ function hideInfoPanel() {
 // ── Speed measurement ────────────────────────────────
 
 function startSpeedMonitor() {
-    if (state.hls) {
-        clearInterval(state.speedMeasureInterval);
-        state.speedMeasureInterval = setInterval(() => {
-            if (!state.hls) return;
-            // hls.js 提供的统计信息
-            const stats = state.hls.stats;
-            if (stats && stats.fragLoading && stats.fragLoading.lastLoaded) {
-                // 简化：使用 bandwidth 估算
+    if (state.speedMeasureInterval) return;
+    updateSpeedDisplay();
+
+    state.speedMeasureInterval = setInterval(() => {
+        let speedKbps = 0;
+
+        // 方法1：用 Performance API 直接监控 /api/proxy/stream 请求的下载速度
+        // 这是最可靠的方法，不依赖 hls.js 内部 stats API
+        try {
+            const entries = performance.getEntriesByType('resource')
+                .filter(e => e.name.includes('/api/proxy/stream'))
+                .filter(e => e.transferSize > 0 || e.decodedBodySize > 0)
+                .slice(-3); // 最近3个请求
+
+            if (entries.length > 0) {
+                const totalBytes = entries.reduce((sum, e) => sum + (e.transferSize || e.decodedBodySize || 0), 0);
+                const totalTime = entries.reduce((sum, e) => sum + e.duration, 0) / 1000;
+                if (totalTime > 0 && totalBytes > 0) {
+                    speedKbps = Math.round((totalBytes * 8 / totalTime) / 1000);
+                }
             }
-            // 使用 video 的 buffered 来估算
-            const v = state.videoEl;
-            if (!v || !v.buffered || !v.buffered.length) return;
-            try {
-                const bufEnd = v.buffered.end(v.buffered.length - 1);
-                const bufStart = v.buffered.start(v.buffered.length - 1);
-                // 简单估算：下载速率（这里用 HLS 的 bandwidth 如果可用）
-                if (state.hls.levels && state.hls.levels.length > 0) {
-                    const currentLevel = state.hls.levels[state.hls.currentLevel >= 0 ? state.hls.currentLevel : 0];
-                    if (currentLevel && currentLevel.bitrate) {
-                        state.lastSpeedKbps = Math.round(currentLevel.bitrate / 1000);
+        } catch (e) {}
+
+        // 方法2：通过 video.buffered 增长估算（如果 Performance API 不可用）
+        if (speedKbps <= 0 && dom.video) {
+            const v = dom.video;
+            if (v.buffered && v.buffered.length > 0) {
+                const end = v.buffered.end(v.buffered.length - 1);
+                const now = performance.now();
+                if (state._lastBufEnd !== undefined && state._lastBufTime) {
+                    const bufDelta = end - state._lastBufEnd;
+                    const timeDelta = (now - state._lastBufTime) / 1000;
+                    if (bufDelta > 0 && timeDelta > 0) {
+                        // 用视频码率估算下载速度（缓冲增长秒数 × 码率 / 实际时间）
+                        let bitrate = 2000000; // 默认 2 Mbps
+                        if (state.hls && state.hls.levels && state.hls.levels.length > 0) {
+                            const lvl = state.hls.levels[state.hls.currentLevel >= 0 ? state.hls.currentLevel : 0];
+                            if (lvl && lvl.bitrate) bitrate = lvl.bitrate;
+                        }
+                        speedKbps = Math.round((bufDelta * bitrate / timeDelta) / 1000);
                     }
                 }
-            } catch (e) {
-                // ignore
+                state._lastBufEnd = end;
+                state._lastBufTime = now;
             }
-            updateSpeedDisplay();
-        }, 2000);
-    }
+        }
+
+        state.lastSpeedKbps = speedKbps;
+        updateSpeedDisplay();
+    }, 1000);
 }
 
 function updateSpeedDisplay() {
-    if (dom.controlsSpeed && state.lastSpeedKbps > 0) {
-        if (state.lastSpeedKbps > 1000) {
-            dom.controlsSpeed.textContent = (state.lastSpeedKbps / 1000).toFixed(1) + ' Mbps';
-        } else {
-            dom.controlsSpeed.textContent = state.lastSpeedKbps + ' Kbps';
-        }
+    let speedText = '';
+    if (state.lastSpeedKbps > 0) {
+        speedText = state.lastSpeedKbps > 1000
+            ? (state.lastSpeedKbps / 1000).toFixed(1) + ' Mbps'
+            : state.lastSpeedKbps + ' Kbps';
+    } else if (state.isLoading) {
+        speedText = '0 Kbps';
+    }
+    // 控制栏
+    if (dom.controlsSpeed) {
+        dom.controlsSpeed.textContent = speedText;
+    }
+    // 信号徽章常驻显示实时下载速度（每秒刷新，加载中也显示）
+    if (dom.signalBitrate) {
+        dom.signalBitrate.textContent = speedText;
     }
 }
 
@@ -604,6 +658,11 @@ function playChannel(index, isSourceSwitch = false) {
     state.isLoading = true;
     renderChannelList();
 
+    // 切台后立即显示控制栏（含网速区域），避免长时间看不到控制条
+    showControls();
+    // 提前启动网速监控（即使还在加载，也能显示估算码率）
+    startSpeedMonitor();
+
     // 显示源状态 OSD（让用户知道正在尝试第几个源）
     const totalSources = (ch.sources || []).length;
     const curIdx = (ch.active_source_index || 0) + 1;
@@ -619,10 +678,13 @@ function playChannel(index, isSourceSwitch = false) {
 
     destroyPlayer();
 
-    const url = ch.url;
-    if (url.endsWith('.m3u8') || url.includes('m3u8')) {
+    // 源 URL 通过后端流代理，避免浏览器跨域 / ORB 拦截 m3u8 + ts
+    // （判断 m3u8/flv 仍用原始 URL；实际加载使用代理 URL）
+    const rawUrl = ch.url;
+    const url = proxyStreamUrl(rawUrl);
+    if (rawUrl.endsWith('.m3u8') || rawUrl.includes('m3u8')) {
         startHls(url, ch);
-    } else if (url.endsWith('.flv')) {
+    } else if (rawUrl.endsWith('.flv')) {
         dom.video.src = url;
         dom.video.play().catch(handlePlayError);
     } else {
@@ -645,15 +707,15 @@ function startHls(url, ch) {
     }
 
     const hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: true,
+        enableWorker: false,
+        lowLatencyMode: false,
         backbufferLength: 30,
         maxBufferLength: 30,
         maxMaxBufferLength: 60,
-        // 超时 10 秒：给响应慢的好源足够时间，超时后再切下一个备用源
+        // 超时：m3u8 10秒，ts 分片 30秒（某些源分片大 11MB+，下载慢）
         manifestLoadingTimeOut: 10000,
         levelLoadingTimeOut: 10000,
-        fragLoadingTimeOut: 10000,
+        fragLoadingTimeOut: 30000,
     });
 
     // 同一源只试 1 次，失败立即切下一个备用源（快速切源优先，不等待）
@@ -676,17 +738,13 @@ function startHls(url, ch) {
 
     hls.on(Hls.Events.ERROR, (_, data) => {
         if (data.fatal) {
-            console.error('HLS fatal error:', data.type, data.details);
             switch (data.type) {
                 case Hls.ErrorTypes.NETWORK_ERROR:
                     // 网络错误（源连不上）：有限重试，超过次数就切备用源
-                    // （原代码无限 startLoad 同一个死源 → "一直加载"的根因）
                     networkRetryCount++;
                     if (networkRetryCount <= MAX_NETWORK_RETRY) {
-                        console.log('Network retry', networkRetryCount);
                         hls.startLoad();
                     } else {
-                        // 显示"源 X 不可用，切换中"让用户知道卡在哪
                         const curSrc = (state.channels[state.activeIndex].active_source_index || 0) + 1;
                         const total = state.channels[state.activeIndex].sources.length;
                         updateSourceOsd(`⚠️ 源 ${curSrc}/${total} 不可用`, '正在切换下一个源...');
@@ -742,18 +800,31 @@ function destroyPlayer() {
     dom.video.removeAttribute('src');
     dom.video.load();
     clearInterval(state.speedMeasureInterval);
+    state.speedMeasureInterval = null;
+    state._lastBufEnd = undefined;
 }
 
-/** 启动加载超时：12秒内未开始播放就判定源不可用，自动切下一个备用源。 */
+/** 启动加载超时：8秒内未开始播放就判定源不可用，自动切下一个备用源。
+ * 同时显示倒计时，让用户知道在尝试连接（不是卡死）。*/
 function startLoadTimeout() {
     clearLoadTimeout();
+    let remaining = 15;
+    // 倒计时显示：每秒更新信号徽章，让用户看到"连接中 14s/13s/12s..."
+    state.loadCountdown = setInterval(() => {
+        remaining--;
+        if (remaining >= 0 && state.isLoading) {
+            if (dom.signalStatus) {
+                dom.signalStatus.textContent = '连接中 ' + remaining + 's';
+            }
+        }
+    }, 1000);
+    // 15秒 > manifestLoadingTimeOut(10秒)，让 hls.js 有足够时间加载 m3u8
     state.loadTimeout = setTimeout(() => {
         if (state.isLoading) {
-            console.warn('Load timeout (12s), switching source...');
             destroyPlayer();
             trySwitchSource();
         }
-    }, 12000);
+    }, 15000);
 }
 
 /** 清除加载超时（源成功开始播放时调用）。 */
@@ -761,6 +832,10 @@ function clearLoadTimeout() {
     if (state.loadTimeout) {
         clearTimeout(state.loadTimeout);
         state.loadTimeout = null;
+    }
+    if (state.loadCountdown) {
+        clearInterval(state.loadCountdown);
+        state.loadCountdown = null;
     }
 }
 
@@ -795,17 +870,7 @@ function updateSignalBadge(status, bitrateKbps) {
         dom.signalStatus.textContent = s.text;
         dom.signalStatus.className = 'signal-status ' + s.cls;
     }
-
-    // 码率
-    if (dom.signalBitrate) {
-        if (bitrateKbps && bitrateKbps > 0) {
-            dom.signalBitrate.textContent = bitrateKbps > 1000
-                ? (bitrateKbps / 1000).toFixed(1) + ' Mbps'
-                : bitrateKbps + ' Kbps';
-        } else {
-            dom.signalBitrate.textContent = '';
-        }
-    }
+    // 实时下载速度由 speedMonitor 每秒更新（updateSpeedDisplay），这里不覆盖
 
     // 信号格（根据码率/状态决定亮几格）
     updateSignalBars(status, bitrateKbps);
@@ -1001,16 +1066,32 @@ function updateControlsInfo(ch) {
     }
 }
 
-// ── UI: channel list ───────────────────────────────────
+// ── UI: channel list (分页渲染 + Logo 按需加载) ────────────
 
-function renderChannelList() {
-    dom.channelList.innerHTML = '';
-    if (!state.channels.length) {
-        dom.channelList.innerHTML = '<div class="group-label" style="padding:40px;text-align:center;color:var(--text-secondary);">暂无频道</div>';
-        return;
-    }
+// 初始化 IntersectionObserver 用于 Logo 按需加载
+function initLogoObserver() {
+    if (state.logoObserver) return;
+    
+    state.logoObserver = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+            if (entry.isIntersecting) {
+                const img = entry.target;
+                const src = img.dataset.src;
+                if (src) {
+                    img.src = src;
+                    img.removeAttribute('data-src');
+                }
+                state.logoObserver.unobserve(img);
+            }
+        }
+    }, {
+        rootMargin: '200px',  // 提前 200px 开始加载，确保流畅
+        threshold: 0
+    });
+}
 
-    // 按分组聚集渲染
+// 构建分组结构（仅数据，不渲染 DOM）
+function buildChannelGroups() {
     const groups = new Map();
     state.channels.forEach((ch, i) => {
         const g = ch.group || '未分组';
@@ -1018,7 +1099,6 @@ function renderChannelList() {
         groups.get(g).push({ ch, i });
     });
 
-    // 收藏优先
     const favNames = new Set(state.favorites);
     const favChannels = [];
     const nonFavByGroup = new Map();
@@ -1034,32 +1114,136 @@ function renderChannelList() {
         }
     }
 
-    // 渲染收藏区
+    return { favChannels, nonFavByGroup };
+}
+
+// 将扁平化的频道列表转换为带分组标签的有序列表（仅返回指定范围）
+function buildRenderQueue(startIdx, endIdx) {
+    const { favChannels, nonFavByGroup } = buildChannelGroups();
+    const queue = [];
+    let globalIdx = 0;
+    
+    // 收藏优先
     if (favChannels.length > 0) {
-        const label = document.createElement('div');
-        label.className = 'group-label';
-        label.textContent = '⭐ 我的收藏';
-        dom.channelList.appendChild(label);
-
-        for (const { ch, i } of favChannels) {
-            renderChannelItem(ch, i, true);
+        if (globalIdx >= startIdx && globalIdx < endIdx) {
+            queue.push({ type: 'label', text: '⭐ 我的收藏' });
+        }
+        globalIdx++;
+        
+        for (const item of favChannels) {
+            if (globalIdx >= startIdx && globalIdx < endIdx) {
+                queue.push({ type: 'channel', ...item, isFav: true });
+            }
+            globalIdx++;
         }
     }
-
-    // 渲染分组频道
+    
+    // 分组频道
     for (const [groupName, items] of nonFavByGroup) {
-        const label = document.createElement('div');
-        label.className = 'group-label';
-        label.textContent = groupName;
-        if (favChannels.length > 0) label.style.marginTop = '8px';
-        dom.channelList.appendChild(label);
-
-        for (const { ch, i } of items) {
-            renderChannelItem(ch, i, false);
+        if (globalIdx >= startIdx && globalIdx < endIdx) {
+            queue.push({ type: 'label', text: groupName });
+        }
+        globalIdx++;
+        
+        for (const item of items) {
+            if (globalIdx >= startIdx && globalIdx < endIdx) {
+                queue.push({ type: 'channel', ...item, isFav: false });
+            }
+            globalIdx++;
         }
     }
+    
+    return { items: queue, totalCount: globalIdx };
+}
 
+function renderChannelList() {
+    // 停止之前的 Logo Observer
+    if (state.logoObserver) {
+        state.logoObserver.disconnect();
+        state.logoObserver = null;
+    }
+    initLogoObserver();
+    
+    dom.channelList.innerHTML = '';
+    state.renderedCount = 0;
+    
+    if (!state.channels.length) {
+        dom.channelList.innerHTML = '<div class="group-label" style="padding:40px;text-align:center;color:var(--text-secondary);">暂无频道</div>';
+        return;
+    }
+
+    // 初始渲染前一批
+    loadMoreChannels(true);
+    
+    // 设置滚动加载更多
+    setupScrollLoadMore();
+    
     scrollToFocus();
+}
+
+function loadMoreChannels(isInitial = false) {
+    if (state.loadingMore) return;
+    state.loadingMore = true;
+    
+    const startIdx = state.renderedCount;
+    const { items, totalCount } = buildRenderQueue(startIdx, startIdx + state.renderBatchSize);
+    state._totalChannelCount = totalCount; // 保存总数用于判断是否还有更多
+    
+    for (const item of items) {
+        if (item.type === 'label') {
+            const label = document.createElement('div');
+            label.className = 'group-label';
+            label.textContent = item.text;
+            if (!isInitial && dom.channelList.children.length > 0) {
+                label.style.marginTop = '8px';
+            }
+            dom.channelList.appendChild(label);
+        } else {
+            renderChannelItem(item.ch, item.i, item.isFav);
+        }
+    }
+    
+    state.renderedCount = startIdx + items.length;
+    state.loadingMore = false;
+    
+    // 更新加载更多指示器
+    updateLoadMoreIndicator();
+}
+
+function setupScrollLoadMore() {
+    const container = dom.channelList;
+    if (!container) return;
+    
+    // 使用 scroll 事件检测滚动到底部
+    const onScroll = () => {
+        const scrollBottom = container.scrollTop + container.clientHeight;
+        const threshold = container.scrollHeight - 200; // 距底部 200px 时加载
+        const totalCount = state._totalChannelCount || (state.channels.length + 100);
+        
+        if (scrollBottom >= threshold && state.renderedCount < totalCount) {
+            loadMoreChannels();
+        }
+    };
+    
+    // 移除旧的监听器并添加新的
+    container.removeEventListener('scroll', onScroll);
+    container.addEventListener('scroll', onScroll, { passive: true });
+}
+
+function updateLoadMoreIndicator() {
+    // 移除旧的指示器
+    const oldIndicator = dom.channelList.querySelector('.load-more-indicator');
+    if (oldIndicator) oldIndicator.remove();
+    
+    // 检查是否还有更多内容
+    const totalCount = state._totalChannelCount || (state.channels.length + 100);
+    if (state.renderedCount < totalCount) {
+        const indicator = document.createElement('div');
+        indicator.className = 'load-more-indicator';
+        indicator.textContent = '向下滚动加载更多...';
+        indicator.style.cssText = 'padding:16px;text-align:center;color:var(--text-secondary);font-size:13px;';
+        dom.channelList.appendChild(indicator);
+    }
 }
 
 function renderChannelItem(ch, i, isFav) {
@@ -1070,11 +1254,29 @@ function renderChannelItem(ch, i, isFav) {
     if (isFav) item.classList.add('favorite');
     item.dataset.index = i;
 
-    // Logo
+    // Logo - 使用 IntersectionObserver 实现真正的按需加载
     const logoDiv = document.createElement('div');
     logoDiv.className = 'channel-logo';
     if (ch.logo) {
-        logoDiv.innerHTML = `<img src="${ch.logo}" alt="" onerror="this.parentElement.textContent='${ch.name.slice(0, 2)}'">`;
+        const img = document.createElement('img');
+        img.alt = '';
+        img.loading = 'lazy';
+        img.decoding = 'async';
+        img.dataset.src = proxyLogoUrl(ch.logo);
+        img.onerror = function() {
+            this.onerror = null;
+            this.style.display = 'none';
+            const parent = this.parentElement;
+            if (parent) parent.textContent = ch.name.slice(0, 2);
+        };
+        logoDiv.appendChild(img);
+        // 注册到 Observer，只有进入视口才真正加载
+        if (state.logoObserver) {
+            state.logoObserver.observe(img);
+        } else {
+            // Fallback: 直接加载
+            img.src = img.dataset.src;
+        }
     } else {
         logoDiv.textContent = ch.name.slice(0, 2);
     }
@@ -1139,15 +1341,29 @@ function renderChannelItem(ch, i, isFav) {
 
 function scrollToFocus() {
     const items = dom.channelList.querySelectorAll('.channel-item');
-    if (items[state.focusIndex]) {
-        items[state.focusIndex].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    // 只在已渲染的项中查找
+    for (let idx = 0; idx < items.length; idx++) {
+        if (parseInt(items[idx].dataset.index) === state.focusIndex) {
+            items[idx].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            return;
+        }
     }
 }
 
 function setActiveFocus(index) {
     state.focusIndex = index;
     state.activeIndex = index;
-    renderChannelList();
+    
+    // 如果目标频道未渲染，加载更多直到包含该频道
+    if (index >= state.renderedCount) {
+        let maxIterations = 20; // 防止无限循环
+        while (index >= state.renderedCount && maxIterations-- > 0) {
+            loadMoreChannels();
+        }
+    } else {
+        // 直接重新渲染以更新焦点状态
+        renderChannelList();
+    }
 }
 
 // ── Navigation (remote control / keyboard) ─────────────
@@ -1348,9 +1564,11 @@ function setupSidebar() {
 function setupControls() {
     // 鼠标移入视频区域 → 显示控制栏
     dom.videoContainer.addEventListener('mousemove', showControls);
+    // 触屏：无论是否正在播放，点击/触摸都显示控制栏（含网速）
     dom.videoContainer.addEventListener('touchstart', () => {
-        if (state.isPlaying) showControls();
+        showControls();
     }, { passive: true });
+    dom.videoContainer.addEventListener('click', showControls);
 
     // 控制栏按钮
     if (dom.btnPrevCh) dom.btnPrevCh.addEventListener('click', (e) => {
@@ -1480,10 +1698,8 @@ function setupSearch() {
 function setupVideoEvents() {
     dom.video.addEventListener('playing', () => {
         hideOverlay();
-        clearLoadTimeout();       // 已开始播放，取消超时保护
-        hideSourceOsd();          // 播放成功，隐藏源状态 OSD
-        // 信号指示器：已连接，持续显示码率
-        updateSignalBadge('connected', state.lastSpeedKbps);
+        clearLoadTimeout();
+        hideSourceOsd();
         state.isLoading = false;
         state.isPlaying = true;
         updateControlsInfo(state.channels[state.activeIndex] || {});
@@ -1494,8 +1710,11 @@ function setupVideoEvents() {
             renderChannelList();
         }
 
-        // 更新播放/暂停按钮
         if (dom.btnPlayPause) dom.btnPlayPause.textContent = '⏸';
+
+        // 播放开始时立即显示控制栏 + 启动网速监控
+        showControls();
+        startSpeedMonitor();
     });
 
     dom.video.addEventListener('pause', () => {
