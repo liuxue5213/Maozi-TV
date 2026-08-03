@@ -39,9 +39,12 @@ jobs:
 
       - name: 部署 channels.json 到 gh-pages (GitHub)
         run: |
+          # 先把生成的 channels.json 暂存到临时位置，避免分支切换时冲突
+          cp channels.json /tmp/channels.json
+
           git fetch origin gh-pages 2>/dev/null || true
           if git rev-parse origin/gh-pages >/dev/null 2>&1; then
-            git checkout gh-pages
+            git checkout -f gh-pages
             # 只删除存在的文件，避免报错
             git rm -rf . 2>/dev/null || true
           else
@@ -49,8 +52,8 @@ jobs:
             git rm -rf . 2>/dev/null || true
           fi
 
-          # 从 main 分支获取 channels.json
-          git checkout main -- channels.json
+          # 用暂存的 channels.json 覆盖（不再依赖 git checkout main，避免冲突）
+          cp /tmp/channels.json channels.json
           git config user.name "MaoziTV Bot"
           git config user.email "bot@maozi.tv"
           git add channels.json
@@ -67,8 +70,8 @@ jobs:
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
         run: |
-          # 切回 main 获取 channels.json
-          git checkout main -- channels.json
+          # 切回 main 分支获取 channels.json（已在 gh-pages 分支上）
+          git checkout -f main -- channels.json 2>/dev/null || cp /tmp/channels.json channels.json
 
           # 用 Gitee API 更新 channels.json
           # 先获取当前文件 sha（更新时需要）

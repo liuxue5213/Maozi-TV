@@ -60,6 +60,77 @@ def _is_unplayable_url(url: str) -> bool:
     return False
 
 
+# ── 分组标准化：合并"XX""XX频道""☘️XX频道""🇨🇳XX地方"等变体 ────────
+# 所有变体 → 标准名称，避免同一省份/城市被拆成多个分组
+GROUP_NORMALIZE_MAP = {
+    # 省份/城市
+    '☘️上海频道': '上海频道', '上海频道': '上海频道',
+    '☘️北京频道': '北京频道', '北京': '北京频道',
+    '☘️天津频道': '天津频道', '天津频道': '天津频道',
+    '☘️重庆频道': '重庆频道', '重庆': '重庆频道', '重庆频道': '重庆频道',
+    '☘️湖南频道': '湖南频道', '湖南频道': '湖南频道',
+    '☘️湖北频道': '湖北频道', '湖北频道': '湖北频道',
+    '☘️广东频道': '广东频道', '广东频道': '广东频道',
+    '☘️广西频道': '广西频道', '广西频道': '广西频道',
+    '☘️浙江频道': '浙江频道', '浙江': '浙江频道', '浙江频道': '浙江频道',
+    '☘️江苏频道': '江苏频道', '江苏': '江苏频道', '江苏频道': '江苏频道',
+    '☘️安徽频道': '安徽频道', '安徽': '安徽频道', '安徽频道': '安徽频道',
+    '☘️福建频道': '福建频道', '福建': '福建频道', '福建频道': '福建频道',
+    '☘️江西频道': '江西频道', '江西': '江西频道', '江西频道': '江西频道',
+    '☘️山东频道': '山东频道', '山东': '山东频道', '山东频道': '山东频道',
+    '☘️河南频道': '河南频道', '河南': '河南频道', '河南频道': '河南频道',
+    '🇨🇳河南地方': '河南频道',
+    '☘️河北频道': '河北频道', '河北': '河北频道', '河北频道': '河北频道',
+    '☘️山西频道': '山西频道', '山西': '山西频道', '山西频道': '山西频道',
+    '☘️内蒙古频道': '内蒙古频道', '内蒙古': '内蒙古频道',
+    '☘️辽宁频道': '辽宁频道', '辽宁': '辽宁频道', '辽宁频道': '辽宁频道',
+    '☘️吉林频道': '吉林频道', '吉林': '吉林频道', '吉林频道': '吉林频道',
+    '☘️黑龙江频道': '黑龙江频道', '黑龙江': '黑龙江频道', '黑龙江频道': '黑龙江频道',
+    '☘️四川频道': '四川频道', '四川': '四川频道', '四川频道': '四川频道',
+    '☘️贵州频道': '贵州频道', '贵州': '贵州频道', '贵州频道': '贵州频道',
+    '☘️云南频道': '云南频道', '云南': '云南频道', '云南频道': '云南频道',
+    '☘️西藏频道': '西藏频道', '西藏': '西藏频道', '西藏频道': '西藏频道',
+    '☘️陕西频道': '陕西频道', '陕西': '陕西频道', '陕西频道': '陕西频道',
+    '☘️甘肃频道': '甘肃频道', '甘肃': '甘肃频道', '甘肃频道': '甘肃频道',
+    '☘️青海频道': '青海频道', '青海': '青海频道', '青海频道': '青海频道',
+    '☘️宁夏频道': '宁夏频道', '宁夏': '宁夏频道', '宁夏频道': '宁夏频道',
+    '☘️新疆频道': '新疆频道', '新疆': '新疆频道', '新疆频道': '新疆频道',
+    # 其他分组
+    '央视': '央视', '央视频道': '央视', '中国大陆 · 央视': '央视',
+    '卫视': '卫视', '卫视频道': '卫视',
+    '港澳台': '港澳台', '港澳台频道': '港澳台',
+    '电影': '电影', '电影频道': '电影', '🇨🇳电影在线': '电影',
+    '体育频道': '体育频道', '🏀体育频道': '体育频道',
+    '其他': '其他频道', '其他频道': '其他频道',
+    '中国大陆 · 新闻': '新闻',
+}
+
+
+def _normalize_group(group_name: str) -> str:
+    """标准化分组名：去除 emoji 前缀、统一后缀、合并变体。"""
+    if not group_name:
+        return "未分类"
+    g = group_name.strip()
+    # 1. 查映射表
+    if g in GROUP_NORMALIZE_MAP:
+        return GROUP_NORMALIZE_MAP[g]
+    # 2. 去除常见 emoji 前缀
+    import re as _re
+    g_clean = _re.sub(
+        r'^[🇨🇳🇭🇰🇲🇴🇹🇼☘️🪁🏀🎵📺🔴🟡🟢🔵⚡⭐🌟✨🔥💎🎬🎮]+', '', g
+    ).strip()
+    if g_clean in GROUP_NORMALIZE_MAP:
+        return GROUP_NORMALIZE_MAP[g_clean]
+    # 3. 去掉"频道""地方""线路"等后缀后查表
+    for suffix in ('频道', '地方', '线路'):
+        if g_clean.endswith(suffix):
+            base = g_clean[:-len(suffix)].strip()
+            if base in GROUP_NORMALIZE_MAP:
+                return GROUP_NORMALIZE_MAP[base]
+    # 4. 原样返回
+    return g
+
+
 # Pattern for EXTINF line: #EXTINF:-1 tvg-name="xxx" tvg-logo="xxx" group-title="xxx",Channel Name
 EXTINF_PATTERN = re.compile(
     r'#EXTINF:[-.\d]+\s*'
@@ -99,7 +170,7 @@ def parse_m3u(content: str, source: str = "") -> List[ChannelEntry]:
             if m:
                 channel_name = (m.group("tvg_name") or m.group("channel_name") or "").strip()
                 tvg_logo = (m.group("tvg_logo") or "").strip()
-                group_title = (m.group("group_title") or "未分类").strip()
+                group_title = _normalize_group((m.group("group_title") or "未分类").strip())
             else:
                 # Fallback: take everything after the last comma
                 if "," in line:
@@ -218,7 +289,7 @@ def parse_tvbox_txt(content: str, source: str = "") -> List[ChannelEntry]:
         if line.endswith("#genre#"):
             group_name = line.replace("#genre#", "").rstrip(",").strip()
             if group_name:
-                current_group = group_name
+                current_group = _normalize_group(group_name)
             continue
         # 频道行: "频道名,URL"
         if "," in line:

@@ -5,16 +5,19 @@ This is the core module that ensures channels always have working sources.
 
 import concurrent.futures
 import logging
+import threading
 import time
+from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 import requests
 from sqlalchemy import desc, func
 
 from .config import config
 from .database import Channel, SessionLocal, SourceCheckLog
-from .checker import check_source
+from .checker import check_source, check_source_codec
 
 from .crawlers.base import ChannelEntry
 from .crawlers.github_crawler import GitHubM3uCrawler
@@ -25,6 +28,57 @@ logger = logging.getLogger(__name__)
 
 # SourceCheckLog rows older than this are purged each check cycle.
 LOG_RETENTION_DAYS = 7
+
+
+class HostAwareExecutor:
+    """站点感知的并发执行器。
+
+    核心逻辑：
+    - 不同站点之间并发执行（提高整体效率）
+    - 同一站点内串行或限速（避免被封禁）
+    - 自动从 URL 提取 host 进行分组
+    """
+
+    def __init__(self, max_workers: int = 20, max_per_host: int = 2):
+        """
+        Args:
+            max_workers: 全局最大并发线程数
+            max_per_host: 单个站点最大并发请求数
+        """
+        self.max_workers = max_workers
+        self.max_per_host = max_per_host
+        self._host_semaphores: Dict[str, threading.Semaphore] = {}
+        self._global_pool = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
+        self._lock = threading.Lock()
+
+    def _get_host(self, url: str) -> str:
+        """从 URL 提取 host"""
+        try:
+            return urlparse(url).hostname or "unknown"
+        except Exception:
+            return "unknown"
+
+    def _get_host_semaphore(self, host: str) -> threading.Semaphore:
+        """获取站点的信号量（控制单站点并发）"""
+        with self._lock:
+            if host not in self._host_semaphores:
+                self._host_semaphores[host] = threading.Semaphore(self.max_per_host)
+            return self._host_semaphores[host]
+
+    def submit(self, fn: Callable, url: str, *args, **kwargs) -> concurrent.futures.Future:
+        """提交任务，自动根据 URL host 控制并发"""
+        host = self._get_host(url)
+        semaphore = self._get_host_semaphore(host)
+
+        def _wrapped():
+            with semaphore:  # 限制同一站点的并发
+                return fn(*args, **kwargs)
+
+        return self._global_pool.submit(_wrapped)
+
+    def shutdown(self, wait: bool = True):
+        """关闭线程池"""
+        self._global_pool.shutdown(wait=wait)
 
 
 class SourceManager:
@@ -66,27 +120,50 @@ class SourceManager:
     def check_and_replace_all(self) -> Tuple[int, int, int]:
         """Check all visible channels and auto-replace dead sources.
 
-        Uses a thread pool for concurrent health checks. Each worker runs in
-        its own SQLAlchemy session to stay thread-safe (a Session object must
-        not be shared across threads).
+        Uses HostAwareExecutor for concurrency:
+        - Different hosts checked in parallel (efficiency)
+        - Same host limited to N concurrent requests (avoid ban)
+        Each worker runs in its own SQLAlchemy session (thread-safe).
+
         Returns (checked_count, replaced_count, hidden_count).
         """
-        # Snapshot channel IDs to check in the main thread (shared session).
+        # Snapshot channel IDs and their active source URLs (main thread).
         with SessionLocal() as db:
-            channel_ids = [
-                cid for (cid,) in db.query(Channel.id)
+            rows = db.query(Channel.id, Channel.sources, Channel.active_source_index) \
                 .filter(Channel.visible == True).all()
-            ]
+
+        # Build: (channel_id, active_source_url) for host-aware scheduling
+        channel_tasks = []
+        for cid, sources_json, active_idx in rows:
+            sources = json.loads(sources_json) if sources_json else []
+            if sources and active_idx < len(sources):
+                channel_tasks.append((cid, sources[active_idx]))
+            elif sources:
+                channel_tasks.append((cid, sources[0]))
+            else:
+                channel_tasks.append((cid, ""))
 
         checked = replaced = hidden = 0
 
-        # Use thread pool for parallel checks
-        max_workers = min(10, len(channel_ids) or 1)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
-            future_to_id = {
-                pool.submit(self._check_and_fix_channel_by_id, cid): cid
-                for cid in channel_ids
-            }
+        # HostAwareExecutor: 从配置读取并发参数
+        executor = HostAwareExecutor(
+            max_workers=config.check_max_workers,
+            max_per_host=config.check_max_per_host,
+        )
+        try:
+            future_to_id = {}
+            for cid, source_url in channel_tasks:
+                if source_url:
+                    future = executor.submit(
+                        self._check_and_fix_channel_by_id, source_url, cid
+                    )
+                else:
+                    # 无源频道直接提交（无需 host 控制）
+                    future = executor._global_pool.submit(
+                        self._check_and_fix_channel_by_id, "", cid
+                    )
+                future_to_id[future] = cid
+
             for future in concurrent.futures.as_completed(future_to_id):
                 checked += 1
                 try:
@@ -98,6 +175,8 @@ class SourceManager:
                 except Exception as e:
                     logger.error("Check error (channel %s): %s",
                                  future_to_id[future], e)
+        finally:
+            executor.shutdown(wait=False)
 
         # Opportunistically purge old check logs to keep the table bounded
         try:
@@ -253,6 +332,14 @@ class SourceManager:
         is_healthy, resp_time, status_code, error = check_source(
             active_url, timeout=config.check_timeout_seconds
         )
+
+        # 编码兼容性检测（可通过 TV_CHECK_CODEC=false 关闭，APK 不需要）
+        if is_healthy and config.check_codec_enabled:
+            codec_ok, v_codec, a_codec = check_source_codec(active_url)
+            if not codec_ok:
+                is_healthy = False
+                error = f"Incompatible codec: audio={a_codec}, video={v_codec}"
+                logger.warning("Codec incompatible for '%s': %s", ch.name, error)
 
         # Log the check result
         check_log = SourceCheckLog(

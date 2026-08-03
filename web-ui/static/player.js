@@ -327,10 +327,12 @@ const dom = {
     btnNextCh: $('#btn-next-ch'),
     btnPlayPause: $('#btn-play-pause'),
     btnSource: $('#btn-source'),
+    btnQuality: $('#btn-quality'),
     btnFullscreen: $('#btn-fullscreen'),
     volumeSlider: $('#volume-slider'),
     volIcon: $('#vol-icon'),
     sourcePopup: $('#source-popup'),
+    qualityPopup: $('#quality-popup'),
     // 频道号 OSD
     channelNumberOsd: $('#channel-number-osd'),
     // 频道信息面板
@@ -391,8 +393,9 @@ function showControls() {
 function hideControls() {
     dom.playerControls.classList.remove('show');
     state.controlsVisible = false;
-    // 同时关闭源弹窗
+    // 同时关闭源弹窗和画质弹窗
     dom.sourcePopup.classList.add('hidden');
+    if (dom.qualityPopup) dom.qualityPopup.classList.add('hidden');
     clearTimeout(state.controlsTimer);
 }
 
@@ -447,7 +450,12 @@ function startSpeedMonitor() {
     if (state.speedMeasureInterval) return;
     updateSpeedDisplay();
 
+    // 记录最后一次 FRAG_LOADED 更新的时间，避免定时器用 0 覆盖实时速度
+    state._lastFragLoadedTime = 0;
     state.speedMeasureInterval = setInterval(() => {
+        // 如果 2 秒内有 FRAG_LOADED 更新过，跳过本次（FRAG_LOADED 更准确）
+        if (performance.now() - state._lastFragLoadedTime < 2000) return;
+
         let speedKbps = 0;
 
         // 方法1：用 Performance API 直接监控 /api/proxy/stream 请求的下载速度
@@ -491,9 +499,12 @@ function startSpeedMonitor() {
             }
         }
 
-        state.lastSpeedKbps = speedKbps;
-        updateSpeedDisplay();
-    }, 1000);
+        // 只在算出有效速度时才更新，避免覆盖 FRAG_LOADED 的实时值
+        if (speedKbps > 0) {
+            state.lastSpeedKbps = speedKbps;
+            updateSpeedDisplay();
+        }
+    }, 500);
 }
 
 function updateSpeedDisplay() {
@@ -733,7 +744,19 @@ function startHls(url, ch) {
         if (hls.levels.length > 1) {
             hls.currentLevel = -1;
         }
+        updateQualityButtonText(); // 更新画质按钮状态
         dom.video.play().catch(handlePlayError);
+
+        // 播放启动超时：如果 5 秒内视频仍未开始播放（可能是编码不兼容如 MP2 音频），
+        // 自动尝试下一个备用源，避免永远卡在"正在连接"
+        clearTimeout(state._playStartTimer);
+        state._playStartTimer = setTimeout(() => {
+            if (!state.isPlaying && state.isLoading) {
+                console.warn('[HLS] 播放启动超时（可能编码不兼容），切换备用源');
+                destroyPlayer();
+                trySwitchSource();
+            }
+        }, 5000);
     });
 
     hls.on(Hls.Events.ERROR, (_, data) => {
@@ -764,14 +787,26 @@ function startHls(url, ch) {
     });
 
     // 码率/网速监控 → 同步更新信号指示器
+    // LEVEL_LOADED：只在还没有实时速度时设置初始值（m3u8 声明的固定码率），
+    // 一旦 FRAG_LOADED 算出实时速度，不再覆盖，避免实时速度被静态值替换。
     hls.on(Hls.Events.LEVEL_LOADED, (_, data) => {
         if (hls.levels && hls.levels[data.level]) {
-            state.lastSpeedKbps = Math.round((hls.levels[data.level].bitrate || 0) / 1000);
-            updateSpeedDisplay();
+            const declaredKbps = Math.round((hls.levels[data.level].bitrate || 0) / 1000);
+            // 只在首次（无实时数据）时写入，后续由 FRAG_LOADED 更新
+            if (state.lastSpeedKbps <= 0) {
+                state.lastSpeedKbps = declaredKbps;
+                updateSpeedDisplay();
+            }
             updateSignalBadge('connected', state.lastSpeedKbps);
         }
     });
 
+    // LEVEL_SWITCHED：画质切换完成 → 更新画质按钮文字
+    hls.on(Hls.Events.LEVEL_SWITCHED, () => {
+        updateQualityButtonText();
+    });
+
+    // FRAG_LOADED：每个 .ts 分片下载完成后计算真实下载速度（实时变化）
     hls.on(Hls.Events.FRAG_LOADED, (_, data) => {
         if (data.frag && data.frag.stats && data.frag.stats.loading) {
             const stats = data.frag.stats;
@@ -779,6 +814,7 @@ function startHls(url, ch) {
             if (duration > 0 && stats.total) {
                 const speedBps = (stats.total * 8) / duration;
                 state.lastSpeedKbps = Math.round(speedBps / 1000);
+                state._lastFragLoadedTime = performance.now(); // 记录更新时间
                 updateSpeedDisplay();
                 updateSignalBadge('connected', state.lastSpeedKbps);
             }
@@ -793,6 +829,8 @@ function startHls(url, ch) {
 
 function destroyPlayer() {
     clearLoadTimeout();
+    clearTimeout(state._playStartTimer);
+    state._playStartTimer = null;
     if (state.hls) {
         state.hls.destroy();
         state.hls = null;
@@ -982,6 +1020,96 @@ function trySwitchSource() {
         });
 }
 
+// ── 画质切换 ──────────────────────────────────────────
+
+/** 根据 level 的宽高返回易读的画质标签 */
+function qualityLabel(level) {
+    if (!level) return '未知';
+    const h = level.height || 0;
+    const w = level.width || 0;
+    if (h >= 2160 || w >= 3840) return '4K';
+    if (h >= 1440 || w >= 2560) return '2K';
+    if (h >= 1080 || w >= 1920) return '1080p';
+    if (h >= 720 || w >= 1280) return '720p';
+    if (h >= 576) return '576p';
+    if (h >= 480) return '480p';
+    if (h > 0) return h + 'p';
+    // 没有宽高信息时用码率
+    const bw = level.bitrate || 0;
+    if (bw >= 8000000) return '4K';
+    if (bw >= 4000000) return '1080p';
+    if (bw >= 2000000) return '720p';
+    return '标清';
+}
+
+/** 更新画质按钮上的文字（显示当前画质） */
+function updateQualityButtonText() {
+    if (!dom.btnQuality) return;
+    if (!state.hls || !state.hls.levels || state.hls.levels.length <= 1) {
+        // 只有一个画质或无 HLS → 隐藏按钮
+        dom.btnQuality.style.display = 'none';
+        return;
+    }
+    dom.btnQuality.style.display = '';
+    const current = state.hls.currentLevel;
+    if (current < 0) {
+        // 自动模式：显示当前实际播放画质 + "自动" 标记
+        const autoLevel = state.hls.levels[state.hls.currentProgram ? state.hls.currentProgram[0] : -1]
+            || state.hls.streamController?.currentLevel;
+        const actualIdx = (autoLevel != null && autoLevel >= 0) ? autoLevel : 0;
+        const label = state.hls.levels[actualIdx] ? qualityLabel(state.hls.levels[actualIdx]) : '自动';
+        dom.btnQuality.textContent = label + ' ⚡';
+    } else {
+        dom.btnQuality.textContent = qualityLabel(state.hls.levels[current]);
+    }
+}
+
+/** 显示画质选择弹窗 */
+function toggleQualityPopup() {
+    if (!dom.qualityPopup || !state.hls) return;
+    const levels = state.hls.levels || [];
+    if (levels.length <= 1) return; // 只有一个画质不显示
+
+    if (dom.qualityPopup.classList.contains('hidden')) {
+        dom.qualityPopup.innerHTML = '';
+        const currentIdx = state.hls.currentLevel;
+
+        // 自动选项
+        const autoItem = document.createElement('div');
+        autoItem.className = 'source-popup-item' + (currentIdx < 0 ? ' active' : '');
+        autoItem.innerHTML = '🔄 自动 <span class="quality-badge">推荐</span>';
+        autoItem.addEventListener('click', (e) => {
+            e.stopPropagation();
+            state.hls.currentLevel = -1; // 自动
+            updateQualityButtonText();
+            dom.qualityPopup.classList.add('hidden');
+        });
+        dom.qualityPopup.appendChild(autoItem);
+
+        // 各画质选项（按分辨率从高到低排序）
+        const sorted = levels.map((lvl, i) => ({ lvl, i }))
+            .sort((a, b) => (b.lvl.height || 0) - (a.lvl.height || 0));
+        for (const { lvl, i } of sorted) {
+            const item = document.createElement('div');
+            item.className = 'source-popup-item' + (i === currentIdx ? ' active' : '');
+            const label = qualityLabel(lvl);
+            const bw = lvl.bitrate ? ` · ${Math.round(lvl.bitrate / 1000)}kbps` : '';
+            item.innerHTML = label + bw;
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                state.hls.currentLevel = i; // 手动选择
+                updateQualityButtonText();
+                dom.qualityPopup.classList.add('hidden');
+            });
+            dom.qualityPopup.appendChild(item);
+        }
+
+        dom.qualityPopup.classList.remove('hidden');
+    } else {
+        dom.qualityPopup.classList.add('hidden');
+    }
+}
+
 /** 手动选择源（由控制栏源按钮触发） */
 function switchToSource(sourceIndex) {
     const ch = state.channels[state.activeIndex];
@@ -1006,8 +1134,14 @@ function switchToSource(sourceIndex) {
 
 function handlePlayError(err) {
     console.error('Playback error:', err);
-    // 不再调用 trySwitchSource（HLS 错误处理已负责换源），
-    // 这里只处理 native 播放的瞬时错误，直接重试当前频道而非换源，避免与 HLS 错误叠加死循环。
+    // HLS 模式下 play() 失败通常是编码不兼容（如 MP2 音频），直接换源
+    if (state.hls) {
+        console.warn('[HLS] play() 失败，编码可能不兼容，切换备用源');
+        destroyPlayer();
+        trySwitchSource();
+        return;
+    }
+    // native 播放失败：重试当前频道
     state.retryCount++;
     if (state.retryCount <= state.maxRetries) {
         setTimeout(() => playChannel(state.activeIndex), 1000);
@@ -1591,6 +1725,10 @@ function setupControls() {
         e.stopPropagation();
         toggleSourcePopup();
     });
+    if (dom.btnQuality) dom.btnQuality.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleQualityPopup();
+    });
 
     // 音量滑块
     if (dom.volumeSlider) {
@@ -1734,8 +1872,12 @@ function setupVideoEvents() {
     dom.video.addEventListener('error', () => {
         const err = dom.video.error;
         if (err) {
-            console.error('Video error:', err.code, err.message);
-            if (state.isPlaying) {
+            const errNames = {1: 'ABORTED', 2: 'NETWORK', 3: 'DECODE', 4: 'SRC_NOT_SUPPORTED'};
+            console.error('[Video] error:', errNames[err.code] || err.code, err.message);
+            // MEDIA_ERR_DECODE (3) = 编码不兼容（如 MP2 音频），尝试换源
+            // 不仅播放中出错要换源，从未播放成功也要换源（编码不兼容时 isPlaying=false）
+            if (state.isPlaying || state.isLoading) {
+                clearTimeout(state._playStartTimer);
                 trySwitchSource();
             }
         }

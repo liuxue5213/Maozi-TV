@@ -301,7 +301,7 @@ def proxy_logo(url: str = Query(..., description="Logo URL to proxy")):
     try:
         resp = requests.get(
             url,
-            timeout=8,
+            timeout=(2, 4),  # 连接2秒，读取4秒（避免慢源阻塞）
             headers={"User-Agent": "Mozilla/5.0 (TV) AppleWebKit/537.36"},
             allow_redirects=True,
         )
