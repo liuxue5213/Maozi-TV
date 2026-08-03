@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    分类导航条目背景。
+    - focused：遥控器焦点停在此项（亮蓝描边 + 半透明填充）
+    - selected：当前选中的分类（实心蓝条 + 左侧色条）
+    - default：透明
+-->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_focused="true" android:state_selected="true">
+        <layer-list>
+            <item>
+                <shape android:shape="rectangle">
+                    <solid android:color="#334A9EFF" />
+                    <corners android:radius="10dp" />
+                    <stroke android:width="2dp" android:color="#6AB4FF" />
+                </shape>
+            </item>
+            <!-- 左侧选中色条：从左 4dp 起，右边界留出大间距让它只占左侧 -->
+            <item android:left="4dp" android:right="80dp" android:top="10dp" android:bottom="10dp">
+                <shape android:shape="rectangle">
+                    <size android:width="3dp" />
+                    <solid android:color="#4A9EFF" />
+                    <corners android:radius="2dp" />
+                </shape>
+            </item>
+        </layer-list>
+    </item>
+    <item android:state_focused="true">
+        <shape android:shape="rectangle">
+            <solid android:color="#264A9EFF" />
+            <corners android:radius="10dp" />
+            <stroke android:width="2dp" android:color="#6AB4FF" />
+        </shape>
+    </item>
+    <item android:state_selected="true">
+        <layer-list>
+            <item>
+                <shape android:shape="rectangle">
+                    <solid android:color="#1A4A9EFF" />
+                    <corners android:radius="10dp" />
+                </shape>
+            </item>
+            <item android:left="4dp" android:right="80dp" android:top="10dp" android:bottom="10dp">
+                <shape android:shape="rectangle">
+                    <size android:width="3dp" />
+                    <solid android:color="#4A9EFF" />
+                    <corners android:radius="2dp" />
+                </shape>
+            </item>
+        </layer-list>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@android:color/transparent" />
+            <corners android:radius="10dp" />
+        </shape>
+    </item>
+</selector>

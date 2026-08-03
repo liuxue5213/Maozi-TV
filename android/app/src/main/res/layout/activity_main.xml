@@ -12,7 +12,7 @@
         android:layout_width="0dp"
         android:layout_height="0dp"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toStartOf="@+id/sidebar"
+        app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toBottomOf="parent">
 
@@ -25,17 +25,20 @@
             app:show_buffering="when_playing"
             app:use_controller="false" />
 
-        <!-- 频道信息叠加层 -->
+        <!-- 当前频道 OSD -->
         <LinearLayout
             android:id="@+id/channel_info_overlay"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="top|start"
-            android:layout_marginStart="16dp"
-            android:layout_marginTop="16dp"
+            android:layout_marginStart="20dp"
+            android:layout_marginTop="20dp"
             android:orientation="vertical"
-            android:background="#80000000"
-            android:padding="8dp"
+            android:background="@drawable/bg_osd_panel"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="12dp"
+            android:paddingBottom="12dp"
             android:visibility="gone">
 
             <TextView
@@ -43,7 +46,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:textColor="#FFFFFF"
-                android:textSize="18sp"
+                android:textSize="22sp"
                 android:textStyle="bold" />
 
             <TextView
@@ -51,40 +54,40 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:textColor="#B3FFFFFF"
-                android:textSize="12sp"
-                android:layout_marginTop="2dp" />
+                android:textSize="13sp"
+                android:layout_marginTop="4dp" />
         </LinearLayout>
 
-        <!-- 实时网速 -->
         <TextView
             android:id="@+id/tv_speed"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="top|end"
-            android:layout_marginEnd="16dp"
-            android:layout_marginTop="16dp"
-            android:textColor="#B3FFFFFF"
-            android:textSize="12sp"
-            android:background="#80000000"
-            android:padding="4dp"
+            android:layout_marginEnd="20dp"
+            android:layout_marginTop="20dp"
+            android:textColor="#E6FFFFFF"
+            android:textSize="13sp"
+            android:background="@drawable/bg_osd_panel"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
             android:text="0 KB/s" />
 
-        <!-- 频道号跳转 -->
         <TextView
             android:id="@+id/tv_channel_number"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
             android:textColor="#FFFFFF"
-            android:textSize="64sp"
+            android:textSize="96sp"
             android:textStyle="bold"
-            android:shadowColor="#000000"
-            android:shadowDx="2"
-            android:shadowDy="2"
-            android:shadowRadius="4"
+            android:shadowColor="#80000000"
+            android:shadowDx="0"
+            android:shadowDy="4"
+            android:shadowRadius="12"
             android:visibility="gone" />
 
-        <!-- 加载/错误提示 -->
         <TextView
             android:id="@+id/tv_status"
             android:layout_width="wrap_content"
@@ -92,50 +95,114 @@
             android:layout_gravity="center"
             android:textColor="#FFFFFF"
             android:textSize="16sp"
+            android:background="@drawable/bg_osd_panel"
+            android:padding="16dp"
             android:visibility="gone" />
     </FrameLayout>
 
-    <!-- 侧边栏 -->
-    <LinearLayout
-        android:id="@+id/sidebar"
-        android:layout_width="280dp"
+    <!-- 全屏选台面板 -->
+    <FrameLayout
+        android:id="@+id/channel_panel"
+        android:layout_width="0dp"
         android:layout_height="0dp"
-        android:orientation="vertical"
-        android:background="#CC1A1A2E"
+        android:background="#E6101018"
+        android:visibility="gone"
+        app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintBottom_toBottomOf="parent"
-        android:visibility="gone">
+        app:layout_constraintBottom_toBottomOf="parent">
 
-        <!-- 标题 -->
-        <TextView
+        <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="40dp"
-            android:text="频道列表"
-            android:textColor="#FFFFFF"
-            android:textSize="16sp"
-            android:textStyle="bold"
-            android:gravity="center"
-            android:background="#1A1A2E" />
+            android:layout_height="match_parent"
+            android:orientation="vertical">
 
-        <!-- 分组标签 -->
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/rv_groups"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="#16162A" />
+            <!-- 顶栏 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:background="#CC141420">
 
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:background="#333366" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="🎩 选台"
+                    android:textColor="#4A9EFF"
+                    android:textSize="20sp"
+                    android:textStyle="bold"
+                    android:layout_marginEnd="16dp" />
 
-        <!-- 频道列表 -->
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/rv_channels"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1" />
-    </LinearLayout>
+                <EditText
+                    android:id="@+id/et_search"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_search_input"
+                    android:hint="搜索频道..."
+                    android:textColorHint="#66FFFFFF"
+                    android:textColor="#FFFFFF"
+                    android:textSize="15sp"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp"
+                    android:singleLine="true"
+                    android:imeOptions="actionSearch"
+                    android:inputType="text"
+                    android:importantForAutofill="no" />
+
+                <TextView
+                    android:id="@+id/tv_panel_count"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:textColor="#9090A0"
+                    android:textSize="13sp"
+                    android:text="0 个频道" />
+            </LinearLayout>
+
+            <!-- 主体：分类 + 网格 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:orientation="horizontal">
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/rv_categories"
+                    android:layout_width="112dp"
+                    android:layout_height="match_parent"
+                    android:background="#141420"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp"
+                    android:clipToPadding="false" />
+
+                <View
+                    android:layout_width="1dp"
+                    android:layout_height="match_parent"
+                    android:background="#22FFFFFF" />
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/rv_channels"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:padding="12dp"
+                    android:clipToPadding="false" />
+            </LinearLayout>
+
+            <!-- 底栏提示 -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="36dp"
+                android:gravity="center"
+                android:text="OK 确认 · 长按收藏 · 返回关闭 · 上下键换台"
+                android:textColor="#66FFFFFF"
+                android:textSize="12sp"
+                android:background="#0A0A12" />
+        </LinearLayout>
+    </FrameLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

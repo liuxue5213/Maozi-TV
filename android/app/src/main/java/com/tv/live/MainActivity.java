@@ -9,10 +9,13 @@ import android.os.Looper;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.widget.EditText;
-import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import androidx.recyclerview.widget.GridLayoutManager;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
@@ -85,26 +88,26 @@ public class MainActivity extends AppCompatActivity {
     private DefaultTrackSelector trackSelector;
     private DefaultBandwidthMeter bandwidthMeter;
 
-    private LinearLayout sidebar;
-    private RecyclerView rvGroups;
+    private View channelPanel;
+    private RecyclerView rvCategories;
     private RecyclerView rvChannels;
-    private GroupAdapter groupAdapter;
+    private CategoryAdapter categoryAdapter;
     private ChannelAdapter channelAdapter;
+    private EditText etSearch;
+    private TextView tvPanelCount;
 
     private TextView tvChannelName;
     private TextView tvChannelGroup;
-    private LinearLayout channelInfoOverlay;
+    private View channelInfoOverlay;
     private TextView tvSpeed;
     private TextView tvChannelNumber;
     private TextView tvStatus;
 
     // ── 数据 ────────────────────────────────────────────────
     private final List<Channel> allChannels = new ArrayList<>();
-    private final Map<String, List<Channel>> groupMap = new LinkedHashMap<>();
-    private final List<String> groupNames = new ArrayList<>();
-    private String currentGroup = "全部";
+    private String currentCategoryId = CategoryHelper.ALL;
+    private String searchQuery = "";
     private Channel currentChannel;
-    private int currentChannelPosition = -1;
 
     // ── 线程/Handler ────────────────────────────────────────
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -115,10 +118,10 @@ public class MainActivity extends AppCompatActivity {
     private final Handler channelNumberHandler = new Handler(Looper.getMainLooper());
     private static final long CHANNEL_NUMBER_TIMEOUT = 3000; // 3秒无输入则跳转
 
-    // ── 侧边栏显隐 ─────────────────────────────────────────
-    private boolean sidebarVisible = false;
-    private final Handler sidebarAutoHideHandler = new Handler(Looper.getMainLooper());
-    private static final long SIDEBAR_AUTO_HIDE_DELAY = 8000;
+    // ── 选台面板显隐 ─────────────────────────────────────────
+    private boolean panelVisible = false;
+    private final Handler panelAutoHideHandler = new Handler(Looper.getMainLooper());
+    private static final long PANEL_AUTO_HIDE_DELAY = 12000;
 
     // ── 频道信息叠加层自动隐藏 ──────────────────────────────
     private final Handler infoOverlayHandler = new Handler(Looper.getMainLooper());
@@ -182,7 +185,7 @@ public class MainActivity extends AppCompatActivity {
         mainHandler.removeCallbacksAndMessages(null);
         speedHandler.removeCallbacksAndMessages(null);
         channelNumberHandler.removeCallbacksAndMessages(null);
-        sidebarAutoHideHandler.removeCallbacksAndMessages(null);
+        panelAutoHideHandler.removeCallbacksAndMessages(null);
         infoOverlayHandler.removeCallbacksAndMessages(null);
 
         // 释放播放器
@@ -200,9 +203,11 @@ public class MainActivity extends AppCompatActivity {
 
     private void initViews() {
         playerView = findViewById(R.id.player_view);
-        sidebar = findViewById(R.id.sidebar);
-        rvGroups = findViewById(R.id.rv_groups);
+        channelPanel = findViewById(R.id.channel_panel);
+        rvCategories = findViewById(R.id.rv_categories);
         rvChannels = findViewById(R.id.rv_channels);
+        etSearch = findViewById(R.id.et_search);
+        tvPanelCount = findViewById(R.id.tv_panel_count);
         tvChannelName = findViewById(R.id.tv_channel_name);
         tvChannelGroup = findViewById(R.id.tv_channel_group);
         channelInfoOverlay = findViewById(R.id.channel_info_overlay);
@@ -210,7 +215,15 @@ public class MainActivity extends AppCompatActivity {
         tvChannelNumber = findViewById(R.id.tv_channel_number);
         tvStatus = findViewById(R.id.tv_status);
 
-        // 显示加载状态
+        etSearch.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                searchQuery = s != null ? s.toString().trim() : "";
+                refreshChannelGrid();
+            }
+            @Override public void afterTextChanged(Editable s) {}
+        });
+
         showStatus("加载中…");
     }
 
@@ -346,10 +359,9 @@ public class MainActivity extends AppCompatActivity {
         showChannelInfo(channel);
 
         // 更新选中状态
+        channelAdapter.setSelectedChannelId(channel.id);
         int pos = channelAdapter.findPositionByChannelId(channel.id);
         if (pos >= 0) {
-            currentChannelPosition = pos;
-            channelAdapter.setSelectedPosition(pos);
             rvChannels.scrollToPosition(pos);
         }
     }
@@ -403,20 +415,20 @@ public class MainActivity extends AppCompatActivity {
     // ══════════════════════════════════════════════════════════
 
     private void initRecyclerViews() {
-        // 分组列表（水平）
-        groupAdapter = new GroupAdapter((group, position) -> {
-            currentGroup = group.name;
-            updateChannelList();
+        categoryAdapter = new CategoryAdapter((item, position) -> {
+            currentCategoryId = item.category.id;
+            refreshChannelGrid();
         });
-        rvGroups.setLayoutManager(new LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false));
-        rvGroups.setAdapter(groupAdapter);
+        rvCategories.setLayoutManager(new LinearLayoutManager(this));
+        rvCategories.setAdapter(categoryAdapter);
 
-        // 频道列表（垂直）
+        int span = getGridSpanCount();
+        GridLayoutManager gridLayout = new GridLayoutManager(this, span);
         channelAdapter = new ChannelAdapter(new ChannelAdapter.OnChannelClickListener() {
             @Override
             public void onChannelClick(Channel channel, int position) {
                 playChannel(channel);
-                hideSidebar();
+                hideChannelPanel();
             }
 
             @Override
@@ -425,41 +437,47 @@ public class MainActivity extends AppCompatActivity {
                 return true;
             }
         });
-        rvChannels.setLayoutManager(new LinearLayoutManager(this));
+        rvChannels.setLayoutManager(gridLayout);
         rvChannels.setAdapter(channelAdapter);
+    }
+
+    private int getGridSpanCount() {
+        int widthDp = getResources().getConfiguration().screenWidthDp;
+        if (widthDp >= 960) return 5;
+        if (widthDp >= 720) return 4;
+        if (widthDp >= 480) return 3;
+        return 2;
     }
 
     // ══════════════════════════════════════════════════════════
     // 侧边栏显隐
     // ══════════════════════════════════════════════════════════
 
-    private void showSidebar() {
-        sidebarVisible = true;
-        sidebar.setVisibility(View.VISIBLE);
-        sidebarAutoHideHandler.removeCallbacksAndMessages(null);
-        sidebarAutoHideHandler.postDelayed(this::hideSidebar, SIDEBAR_AUTO_HIDE_DELAY);
+    private void showChannelPanel() {
+        panelVisible = true;
+        channelPanel.setVisibility(View.VISIBLE);
+        refreshCategoryNav();
+        refreshChannelGrid();
+        panelAutoHideHandler.removeCallbacksAndMessages(null);
+        panelAutoHideHandler.postDelayed(this::hideChannelPanel, PANEL_AUTO_HIDE_DELAY);
 
-        // 聚焦到频道列表
-        if (rvChannels.getAdapter() != null && channelAdapter.getItemCount() > 0) {
-            rvChannels.requestFocus();
-            if (currentChannelPosition >= 0) {
-                rvChannels.scrollToPosition(currentChannelPosition);
-            }
+        if (currentChannel != null) {
+            int pos = channelAdapter.findPositionByChannelId(currentChannel.id);
+            if (pos >= 0) rvChannels.scrollToPosition(pos);
         }
+        rvChannels.requestFocus();
     }
 
-    private void hideSidebar() {
-        sidebarVisible = false;
-        sidebar.setVisibility(View.GONE);
-        sidebarAutoHideHandler.removeCallbacksAndMessages(null);
+    private void hideChannelPanel() {
+        panelVisible = false;
+        channelPanel.setVisibility(View.GONE);
+        panelAutoHideHandler.removeCallbacksAndMessages(null);
+        playerView.requestFocus();
     }
 
-    private void toggleSidebar() {
-        if (sidebarVisible) {
-            hideSidebar();
-        } else {
-            showSidebar();
-        }
+    private void toggleChannelPanel() {
+        if (panelVisible) hideChannelPanel();
+        else showChannelPanel();
     }
 
     // ══════════════════════════════════════════════════════════
@@ -476,8 +494,6 @@ public class MainActivity extends AppCompatActivity {
             }
 
             allChannels.clear();
-            groupMap.clear();
-            groupNames.clear();
 
             // 加载收藏集
             SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
@@ -498,19 +514,7 @@ public class MainActivity extends AppCompatActivity {
                 allChannels.add(ch);
             }
 
-            // 按分组归类
-            for (Channel ch : allChannels) {
-                String grp = ch.group;
-                if (!groupMap.containsKey(grp)) {
-                    groupMap.put(grp, new ArrayList<>());
-                }
-                groupMap.get(grp).add(ch);
-            }
-
-            groupNames.addAll(groupMap.keySet());
-
-            Log.i(TAG, "解析完成: " + allChannels.size() + " 个频道, "
-                    + groupNames.size() + " 个分组");
+            Log.i(TAG, "解析完成: " + allChannels.size() + " 个频道");
             return true;
 
         } catch (Exception e) {
@@ -528,36 +532,14 @@ public class MainActivity extends AppCompatActivity {
      * 更新分组标签和频道列表到 UI
      */
     private void updateUI() {
-        // 构建分组列表（全部 + 收藏 + 各分组）
-        List<GroupAdapter.GroupItem> groupItems = new ArrayList<>();
-        groupItems.add(new GroupAdapter.GroupItem("全部", allChannels.size()));
+        currentCategoryId = CategoryHelper.ALL;
+        searchQuery = "";
+        if (etSearch != null) etSearch.setText("");
 
-        // 收藏数量
-        int favCount = 0;
-        for (Channel ch : allChannels) {
-            if (ch.isFavorite) favCount++;
-        }
-        if (favCount > 0) {
-            groupItems.add(new GroupAdapter.GroupItem("收藏", favCount));
-        }
-
-        for (String grp : groupNames) {
-            List<Channel> chs = groupMap.get(grp);
-            if (chs != null) {
-                groupItems.add(new GroupAdapter.GroupItem(grp, chs.size()));
-            }
-        }
-
-        groupAdapter.setGroups(groupItems);
-        groupAdapter.setSelectedPosition(0);
-        currentGroup = "全部";
-
-        updateChannelList();
-
-        // 隐藏加载状态
+        refreshCategoryNav();
+        refreshChannelGrid();
         hideStatus();
 
-        // 启动行为：优先恢复上次播放的频道；无记录则展示侧边栏让用户选台。
         if (!allChannels.isEmpty()) {
             SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
             int lastId = prefs.getInt(KEY_LAST_CHANNEL, -1);
@@ -568,43 +550,55 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
             if (last != null) {
-                // 切到上次频道所在分组并播放
-                currentGroup = "全部";
-                updateChannelList();
-                groupAdapter.setSelectedPosition(0);
                 playChannel(last);
             } else {
-                // 首次使用：展示侧边栏，不自动播放
-                showSidebar();
+                showChannelPanel();
             }
         }
     }
 
-    /**
-     * 根据当前选中分组更新频道列表
-     */
-    private void updateChannelList() {
-        List<Channel> filtered;
-        if ("全部".equals(currentGroup)) {
-            filtered = allChannels;
-        } else if ("收藏".equals(currentGroup)) {
-            filtered = new ArrayList<>();
-            for (Channel ch : allChannels) {
-                if (ch.isFavorite) filtered.add(ch);
+    private void refreshCategoryNav() {
+        List<CategoryAdapter.CategoryItem> items = new ArrayList<>();
+        Map<String, List<Channel>> buckets = CategoryHelper.buildSmartBuckets(allChannels);
+
+        for (CategoryHelper.Category cat : CategoryHelper.getNavCategories()) {
+            int count;
+            if (CategoryHelper.ALL.equals(cat.id)) {
+                count = allChannels.size();
+            } else if (CategoryHelper.FAV.equals(cat.id)) {
+                count = 0;
+                for (Channel ch : allChannels) if (ch.isFavorite) count++;
+            } else {
+                List<Channel> bucket = buckets.get(cat.id);
+                count = bucket != null ? bucket.size() : 0;
             }
-        } else {
-            filtered = groupMap.getOrDefault(currentGroup, Collections.emptyList());
+            if (CategoryHelper.FAV.equals(cat.id) && count == 0) continue;
+            items.add(new CategoryAdapter.CategoryItem(cat, count));
         }
 
+        categoryAdapter.setItems(items);
+
+        int selectedPos = 0;
+        for (int i = 0; i < items.size(); i++) {
+            if (items.get(i).category.id.equals(currentCategoryId)) {
+                selectedPos = i;
+                break;
+            }
+        }
+        categoryAdapter.setSelectedPosition(selectedPos);
+    }
+
+    private void refreshChannelGrid() {
+        List<Channel> filtered = CategoryHelper.filter(allChannels, currentCategoryId, false);
+        filtered = CategoryHelper.search(filtered, searchQuery);
         channelAdapter.setChannels(filtered);
 
-        // 更新选中位置
+        if (tvPanelCount != null) {
+            tvPanelCount.setText(filtered.size() + " 个频道");
+        }
+
         if (currentChannel != null) {
-            int pos = channelAdapter.findPositionByChannelId(currentChannel.id);
-            if (pos >= 0) {
-                currentChannelPosition = pos;
-                channelAdapter.setSelectedPosition(pos);
-            }
+            channelAdapter.setSelectedChannelId(currentChannel.id);
         }
     }
 
@@ -621,7 +615,7 @@ public class MainActivity extends AppCompatActivity {
 
         // 刷新列表
         channelAdapter.notifyDataSetChanged();
-        updateGroupTabs();
+        refreshCategoryNav();
     }
 
     private void saveFavorites() {
@@ -634,29 +628,6 @@ public class MainActivity extends AppCompatActivity {
         }
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .edit().putString(KEY_FAVORITES, sb.toString()).apply();
-    }
-
-    private void updateGroupTabs() {
-        // 刷新分组标签（收藏数可能变了）
-        List<GroupAdapter.GroupItem> groupItems = new ArrayList<>();
-        groupItems.add(new GroupAdapter.GroupItem("全部", allChannels.size()));
-
-        int favCount = 0;
-        for (Channel ch : allChannels) {
-            if (ch.isFavorite) favCount++;
-        }
-        if (favCount > 0) {
-            groupItems.add(new GroupAdapter.GroupItem("收藏", favCount));
-        }
-
-        for (String grp : groupNames) {
-            List<Channel> chs = groupMap.get(grp);
-            if (chs != null) {
-                groupItems.add(new GroupAdapter.GroupItem(grp, chs.size()));
-            }
-        }
-
-        groupAdapter.setGroups(groupItems);
     }
 
     // ══════════════════════════════════════════════════════════
@@ -886,22 +857,12 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void jumpToChannel(int channelNumber) {
-        // 在所有频道中查找频道号
         if (channelNumber < 1 || channelNumber > allChannels.size()) {
             Toast.makeText(this, "频道号超出范围 (1-" + allChannels.size() + ")", Toast.LENGTH_SHORT).show();
             return;
         }
         Channel target = allChannels.get(channelNumber - 1);
-
-        // 切换到对应的分组
-        if (!"全部".equals(currentGroup) && !"收藏".equals(currentGroup)
-                && !currentGroup.equals(target.group)) {
-            currentGroup = "全部";
-            updateChannelList();
-            // 选中 "全部" 分组
-            groupAdapter.setSelectedPosition(0);
-        }
-
+        currentCategoryId = CategoryHelper.ALL;
         playChannel(target);
         Log.i(TAG, "跳转到频道 " + channelNumber + ": " + target.name);
     }
@@ -917,12 +878,35 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
+        // 选台面板打开时：交给 RecyclerView 自身的焦点导航（上下/左右移动），
+        // 只拦截 OK/BACK/数字键，其余方向键透传给系统做焦点移动。
+        if (panelVisible) {
+            switch (keyCode) {
+                case KeyEvent.KEYCODE_DPAD_CENTER:
+                case KeyEvent.KEYCODE_ENTER:
+                    if (event.getRepeatCount() == 0) {
+                        okLongPressed = false;
+                        event.startTracking();
+                    }
+                    return true;
+                case KeyEvent.KEYCODE_BACK:
+                    hideChannelPanel();
+                    return true;
+                // 面板内方向键：透传到系统，让 RecyclerView 做焦点移动
+                case KeyEvent.KEYCODE_DPAD_UP:
+                case KeyEvent.KEYCODE_DPAD_DOWN:
+                case KeyEvent.KEYCODE_DPAD_LEFT:
+                case KeyEvent.KEYCODE_DPAD_RIGHT:
+                    break;
+            }
+            return super.onKeyDown(keyCode, event);
+        }
+
+        // ── 面板关闭（全屏播放态）──────────────────────────────
         // 数字键：频道号快速跳转
         if (keyCode >= KeyEvent.KEYCODE_0 && keyCode <= KeyEvent.KEYCODE_9) {
-            if (!sidebarVisible) {
-                handleChannelNumberInput(keyCode - KeyEvent.KEYCODE_0);
-                return true;
-            }
+            handleChannelNumberInput(keyCode - KeyEvent.KEYCODE_0);
+            return true;
         }
 
         switch (keyCode) {
@@ -931,29 +915,23 @@ public class MainActivity extends AppCompatActivity {
                 showSettingsDialog();
                 return true;
 
-            // OK/Enter 短按 → 播放/切换侧边栏
+            // OK/Enter 短按 → 打开选台面板（长按另走收藏）
             case KeyEvent.KEYCODE_DPAD_CENTER:
             case KeyEvent.KEYCODE_ENTER:
                 if (event.getRepeatCount() == 0) {
-                    okLongPressed = false;   // 重置长按标志
+                    okLongPressed = false;
                     event.startTracking();
                 }
                 return true;
 
-            // 上/下键 → 切换频道（侧边栏关闭时）或移动焦点
+            // 上/下键 → 切换频道
             case KeyEvent.KEYCODE_DPAD_UP:
-                if (!sidebarVisible) {
-                    switchChannelUp();
-                    return true;
-                }
-                break;
+                switchChannelUp();
+                return true;
 
             case KeyEvent.KEYCODE_DPAD_DOWN:
-                if (!sidebarVisible) {
-                    switchChannelDown();
-                    return true;
-                }
-                break;
+                switchChannelDown();
+                return true;
 
             // 左/右键 → 调音量
             case KeyEvent.KEYCODE_DPAD_LEFT:
@@ -964,13 +942,8 @@ public class MainActivity extends AppCompatActivity {
                 adjustVolume(1);
                 return true;
 
-            // BACK 键
+            // BACK 键：长按退出（短按交给系统默认退出行为）
             case KeyEvent.KEYCODE_BACK:
-                if (sidebarVisible) {
-                    hideSidebar();
-                    return true;
-                }
-                // 长按 BACK 退出
                 break;
         }
 
@@ -985,6 +958,8 @@ public class MainActivity extends AppCompatActivity {
             okLongPressed = true;   // 标记已长按，防止 onKeyUp 误触发短按
             if (currentChannel != null) {
                 toggleFavorite(currentChannel);
+                // 面板可见时同步刷新计数
+                if (panelVisible) refreshCategoryNav();
             }
             return true;
         }
@@ -997,15 +972,21 @@ public class MainActivity extends AppCompatActivity {
                 || keyCode == KeyEvent.KEYCODE_ENTER) {
             // 用手动标志判断长按（isLongPress() 在 KEY_UP 上恒为 false）
             if (!okLongPressed) {
-                // 短按 OK：如果侧边栏可见则播放选中频道，否则切换侧边栏
-                if (sidebarVisible) {
-                    // 让 RecyclerView 自己处理焦点点击
+                if (panelVisible) {
+                    // 面板打开：播放当前焦点卡片；无焦点则关闭面板
                     View focused = rvChannels.getFocusedChild();
                     if (focused != null) {
                         focused.performClick();
+                    } else {
+                        // 焦点在分类栏时，回车切到频道网格
+                        View catFocused = rvCategories.getFocusedChild();
+                        if (catFocused != null) {
+                            rvChannels.requestFocus();
+                        }
                     }
                 } else {
-                    toggleSidebar();
+                    // 全屏播放：打开选台面板
+                    showChannelPanel();
                 }
             }
             return true;
@@ -1018,8 +999,9 @@ public class MainActivity extends AppCompatActivity {
     // ══════════════════════════════════════════════════════════
 
     private void switchChannelUp() {
-        // 用当前分组（侧边栏列表）的频道，而非全部频道，避免跨分组跳台。
+        // 面板关闭时上下键换台用「全部频道」，避免面板关闭后列表为空导致无法换台。
         List<Channel> list = channelAdapter.getChannels();
+        if (list == null || list.isEmpty()) list = allChannels;
         if (list.isEmpty()) return;
         // 用 id 查找当前频道位置（比 indexOf 引用相等更稳妥）
         int currentIndex = -1;
@@ -1028,15 +1010,16 @@ public class MainActivity extends AppCompatActivity {
                 if (list.get(i).id == currentChannel.id) { currentIndex = i; break; }
             }
         }
-        // 当前频道不在本组（如刚切换分组），从第 0 个开始
+        // 当前频道不在本组（如刚切换分类），从第 0 个开始
         if (currentIndex < 0) currentIndex = 0;
         int newIndex = (currentIndex <= 0) ? list.size() - 1 : currentIndex - 1;
         playChannel(list.get(newIndex));
     }
 
     private void switchChannelDown() {
-        // 同上：用当前分组列表，循环切换。
+        // 同上：优先用当前分类列表，为空时回退全部频道。
         List<Channel> list = channelAdapter.getChannels();
+        if (list == null || list.isEmpty()) list = allChannels;
         if (list.isEmpty()) return;
         int currentIndex = -1;
         if (currentChannel != null) {
@@ -1072,8 +1055,8 @@ public class MainActivity extends AppCompatActivity {
     @Override
     public boolean onTouchEvent(android.view.MotionEvent event) {
         if (event.getAction() == android.view.MotionEvent.ACTION_UP) {
-            // 点击屏幕 → 切换侧边栏
-            toggleSidebar();
+            // 点击屏幕 → 切换选台面板（面板打开时则关闭）
+            toggleChannelPanel();
             return true;
         }
         return super.onTouchEvent(event);

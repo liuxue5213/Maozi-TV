@@ -1,52 +1,94 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout
+<FrameLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:orientation="horizontal"
-    android:paddingStart="12dp"
-    android:paddingEnd="12dp"
-    android:paddingTop="6dp"
-    android:paddingBottom="6dp"
-    android:gravity="center_vertical"
+    android:padding="6dp"
     android:focusable="true"
-    android:focusableInTouchMode="true"
-    android:background="@drawable/bg_channel_item">
+    android:focusableInTouchMode="true">
 
-    <!-- 收藏星标 -->
-    <ImageView
-        android:id="@+id/iv_favorite"
-        android:layout_width="16dp"
-        android:layout_height="16dp"
-        android:layout_marginEnd="6dp"
-        android:src="@android:drawable/btn_star_big_off"
-        android:visibility="gone" />
-
-    <!-- 频道 Logo -->
-    <ImageView
-        android:id="@+id/iv_logo"
-        android:layout_width="32dp"
-        android:layout_height="32dp"
-        android:layout_marginEnd="8dp"
-        android:scaleType="fitCenter" />
-
-    <!-- 频道名 -->
-    <TextView
-        android:id="@+id/tv_name"
-        android:layout_width="0dp"
+    <LinearLayout
+        android:id="@+id/card_root"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_weight="1"
-        android:textColor="#FFFFFF"
-        android:textSize="14sp"
-        android:singleLine="true"
-        android:ellipsize="end" />
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:background="@drawable/bg_channel_card"
+        android:padding="10dp">
 
-    <!-- 多源标记 -->
-    <TextView
-        android:id="@+id/tv_source_count"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:textColor="#80FFFFFF"
-        android:textSize="10sp"
-        android:layout_marginStart="4dp" />
-</LinearLayout>
+        <!-- 频道号角标 -->
+        <TextView
+            android:id="@+id/tv_number"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="start"
+            android:layout_marginBottom="4dp"
+            android:background="#334A9EFF"
+            android:paddingStart="6dp"
+            android:paddingEnd="6dp"
+            android:paddingTop="2dp"
+            android:paddingBottom="2dp"
+            android:textColor="#4A9EFF"
+            android:textSize="10sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <!-- Logo -->
+        <FrameLayout
+            android:layout_width="64dp"
+            android:layout_height="64dp"
+            android:layout_marginBottom="8dp">
+
+            <ImageView
+                android:id="@+id/iv_logo"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="fitCenter" />
+
+            <ImageView
+                android:id="@+id/iv_favorite"
+                android:layout_width="16dp"
+                android:layout_height="16dp"
+                android:layout_gravity="top|end"
+                android:src="@android:drawable/btn_star_big_on"
+                android:visibility="gone" />
+        </FrameLayout>
+
+        <!-- 频道名 -->
+        <TextView
+            android:id="@+id/tv_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:maxLines="2"
+            android:ellipsize="end"
+            android:lineSpacingExtra="2dp" />
+
+        <!-- 分组 / 源数 -->
+        <TextView
+            android:id="@+id/tv_meta"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:textColor="#66FFFFFF"
+            android:textSize="10sp"
+            android:layout_marginTop="4dp"
+            android:singleLine="true"
+            android:ellipsize="end" />
+
+        <!-- 正在播放指示 -->
+        <TextView
+            android:id="@+id/tv_playing"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="▶ 播放中"
+            android:textColor="#2ECC71"
+            android:textSize="10sp"
+            android:textStyle="bold"
+            android:layout_marginTop="6dp"
+            android:visibility="gone" />
+    </LinearLayout>
+</FrameLayout>
