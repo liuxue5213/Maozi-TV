@@ -27,7 +27,34 @@ from backend.crawlers.github_crawler import GitHubM3uCrawler
 from backend.crawlers.base import ChannelEntry
 from backend.crawlers.normalize import normalize_channel_name, display_name_for
 from backend.crawlers.classify import classify_channel, sort_key_domestic_first
-from backend.exporter import detect_region
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger("standalone_export")
+
+
+def detect_region(group: str, name: str = "") -> str:
+    """Return "domestic" or "international" based on group/name heuristics.
+
+    内联实现，避免导入 exporter.py（后者依赖 sqlalchemy，CI 环境未安装）。
+    """
+    import re
+    _DOMESTIC_KEYWORDS = [
+        "央视", "卫视", "地方", "港澳台", "体育", "电影", "纪录", "综艺",
+        "少儿", "新闻", "音乐", "电视剧", "直播中国", "咪咕", "频道",
+        "国内", "央视频", "百视", "数字", "华数", "芒果",
+    ]
+    _AMBIGUOUS_GROUPS = {"未分类", "其他", "Undefined"}
+    _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+    for kw in _DOMESTIC_KEYWORDS:
+        if kw in group:
+            return "domestic"
+    if "频道" in group:
+        return "domestic"
+    if group not in _AMBIGUOUS_GROUPS and _CJK_RE.search(group):
+        return "domestic"
+    if group in _AMBIGUOUS_GROUPS and name and _CJK_RE.search(name):
+        return "domestic"
+    return "international"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("standalone_export")
