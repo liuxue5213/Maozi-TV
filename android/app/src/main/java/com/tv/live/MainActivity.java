@@ -675,6 +675,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void initRecyclerViews() {
         categoryAdapter = new CategoryAdapter((item, position) -> {
+            Log.d(TAG, "Category clicked: " + item.category.id + " (" + item.category.name + ")");
             currentCategoryId = item.category.id;
             refreshChannelGrid();
         });
@@ -803,7 +804,8 @@ public class MainActivity extends AppCompatActivity {
      * 更新分组标签和频道列表到 UI
      */
     private void updateUI() {
-        currentCategoryId = CategoryHelper.ALL;
+        // 保持当前选中的分类，不要重置为 ALL
+        // currentCategoryId = CategoryHelper.ALL;
         searchQuery = "";
         if (etSearch != null) etSearch.setText("");
 
@@ -852,6 +854,20 @@ public class MainActivity extends AppCompatActivity {
 
         categoryAdapter.setItems(items);
 
+        // 确保 currentCategoryId 在可用分类中，如果不在则重置为 ALL
+        boolean categoryIdFound = false;
+        for (CategoryAdapter.CategoryItem item : items) {
+            if (item.category.id.equals(currentCategoryId)) {
+                categoryIdFound = true;
+                break;
+            }
+        }
+        if (!categoryIdFound && !items.isEmpty()) {
+            Log.d(TAG, "currentCategoryId '" + currentCategoryId + "' not found in available categories, resetting to ALL");
+            currentCategoryId = CategoryHelper.ALL;
+        }
+
+        // 使用更新后的 currentCategoryId 查找选中位置
         int selectedPos = 0;
         for (int i = 0; i < items.size(); i++) {
             if (items.get(i).category.id.equals(currentCategoryId)) {
@@ -859,12 +875,15 @@ public class MainActivity extends AppCompatActivity {
                 break;
             }
         }
+        Log.d(TAG, "refreshCategoryNav: selectedPos=" + selectedPos + ", currentCategoryId=" + currentCategoryId);
         categoryAdapter.setSelectedPosition(selectedPos);
     }
 
     private void refreshChannelGrid() {
         if (channelAdapter != null) channelAdapter.setSearchQuery(searchQuery);
+        Log.d(TAG, "refreshChannelGrid: currentCategoryId=" + currentCategoryId + ", allChannels.size()=" + allChannels.size());
         List<ChannelOptimized> filtered = CategoryHelper.filter(allChannels, currentCategoryId, false);
+        Log.d(TAG, "refreshChannelGrid: filtered.size()=" + filtered.size());
         // 应用排序
         applySort(filtered);
         // 历史分类：按观看历史排序（最新在前）
