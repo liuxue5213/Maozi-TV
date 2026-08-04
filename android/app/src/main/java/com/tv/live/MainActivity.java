@@ -1507,22 +1507,23 @@ public class MainActivity extends AppCompatActivity {
                 return true;
 
             // ═══ 颜色键（红绿黄蓝）═══
-            case KeyEvent.KEYCODE_PROPS:           // 红键 (部分遥控器)
-            case KeyEvent.KEYCODE_F1:              // 红键备选
-            case KeyEvent.KEYCODE_RED:             // Android 标准红键
+            // 使用直接数字键码，确保所有Android版本兼容
+            case 127:                              // KEYCODE_PROPS (红键，部分遥控器)
+            case KeyEvent.KEYCODE_F1:              // 红键备选 (F1)
+            case 183:                              // KEYCODE_RED (Android 5.0+)
                 // 红键 = 收藏/取消收藏
                 if (currentChannel != null) toggleFavorite(currentChannel);
                 return true;
-            case KeyEvent.KEYCODE_GREEN:           // 绿键 = EPG 节目单
-            case KeyEvent.KEYCODE_F2:
+            case KeyEvent.KEYCODE_F2:              // 绿键备选 (F2)
+            case 184:                              // KEYCODE_GREEN (Android 5.0+)
                 if (currentChannel != null) showEpgDialog(currentChannel);
                 return true;
-            case KeyEvent.KEYCODE_F3:              // 黄键 = 切换源
-            case KeyEvent.KEYCODE_YELLOW:
+            case KeyEvent.KEYCODE_F3:              // 黄键备选 (F3)
+            case 185:                              // KEYCODE_YELLOW (Android 5.0+)
                 if (currentChannel != null && currentChannel.sources.size() > 1) showSourceSwitchDialog();
                 return true;
-            case KeyEvent.KEYCODE_F4:              // 蓝键 = 画质切换
-            case KeyEvent.KEYCODE_BLUE:
+            case KeyEvent.KEYCODE_F4:              // 蓝键备选 (F4)
+            case 186:                              // KEYCODE_BLUE (Android 5.0+)
                 showQualityDialog();
                 return true;
 
