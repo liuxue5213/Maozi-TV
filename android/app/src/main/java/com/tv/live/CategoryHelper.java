@@ -52,7 +52,7 @@ public final class CategoryHelper {
         return list;
     }
 
-    public static String smartCategoryId(Channel ch) {
+    public static String smartCategoryId(ChannelOptimized ch) {
         String name = safe(ch.name);
         String group = safe(ch.group);
         String combined = name + " " + group;
@@ -77,23 +77,23 @@ public final class CategoryHelper {
         return "local";
     }
 
-    public static Map<String, List<Channel>> buildSmartBuckets(List<Channel> channels) {
-        Map<String, List<Channel>> buckets = new LinkedHashMap<>();
+    public static Map<String, List<ChannelOptimized>> buildSmartBuckets(List<ChannelOptimized> channels) {
+        Map<String, List<ChannelOptimized>> buckets = new LinkedHashMap<>();
         for (Category c : SMART_CATEGORIES) {
             buckets.put(c.id, new ArrayList<>());
         }
-        for (Channel ch : channels) {
+        for (ChannelOptimized ch : channels) {
             String id = smartCategoryId(ch);
-            List<Channel> bucket = buckets.get(id);
+            List<ChannelOptimized> bucket = buckets.get(id);
             if (bucket != null) bucket.add(ch);
         }
         return buckets;
     }
 
-    public static List<Channel> filter(List<Channel> all, String categoryId, boolean favoritesOnly) {
-        List<Channel> result = new ArrayList<>();
+    public static List<ChannelOptimized> filter(List<ChannelOptimized> all, String categoryId, boolean favoritesOnly) {
+        List<ChannelOptimized> result = new ArrayList<>();
         if (FAV.equals(categoryId) || favoritesOnly) {
-            for (Channel ch : all) {
+            for (ChannelOptimized ch : all) {
                 if (ch.isFavorite) result.add(ch);
             }
             return result;
@@ -102,16 +102,16 @@ public final class CategoryHelper {
         // 历史分类：由 MainActivity 在 refreshChannelGrid 中根据 playHistory 重排序
         if (HISTORY.equals(categoryId)) return new ArrayList<>(all);
 
-        Map<String, List<Channel>> buckets = buildSmartBuckets(all);
-        List<Channel> bucket = buckets.get(categoryId);
+        Map<String, List<ChannelOptimized>> buckets = buildSmartBuckets(all);
+        List<ChannelOptimized> bucket = buckets.get(categoryId);
         return bucket != null ? new ArrayList<>(bucket) : result;
     }
 
-    public static List<Channel> search(List<Channel> channels, String query) {
+    public static List<ChannelOptimized> search(List<ChannelOptimized> channels, String query) {
         if (query == null || query.trim().isEmpty()) return channels;
         String q = query.trim().toLowerCase(Locale.ROOT);
-        List<Channel> result = new ArrayList<>();
-        for (Channel ch : channels) {
+        List<ChannelOptimized> result = new ArrayList<>();
+        for (ChannelOptimized ch : channels) {
             if (safe(ch.name).toLowerCase(Locale.ROOT).contains(q)
                     || safe(ch.group).toLowerCase(Locale.ROOT).contains(q)) {
                 result.add(ch);

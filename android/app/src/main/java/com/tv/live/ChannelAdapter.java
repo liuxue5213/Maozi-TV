@@ -25,7 +25,7 @@ import java.util.Locale;
  */
 public class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.ViewHolder> {
 
-    private final List<Channel> channels = new ArrayList<>();
+    private final List<ChannelOptimized> channels = new ArrayList<>();
     private int selectedChannelId = -1;
     private String searchQuery = "";
     private OnChannelClickListener listener;
@@ -35,8 +35,8 @@ public class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.ViewHold
     }
 
     public interface OnChannelClickListener {
-        void onChannelClick(Channel channel, int position);
-        boolean onChannelLongClick(Channel channel, int position);
+        void onChannelClick(ChannelOptimized channel, int position);
+        boolean onChannelLongClick(ChannelOptimized channel, int position);
     }
 
     public static class ViewHolder extends RecyclerView.ViewHolder {
@@ -64,7 +64,7 @@ public class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.ViewHold
         this.listener = listener;
     }
 
-    public void setChannels(List<Channel> newChannels) {
+    public void setChannels(List<ChannelOptimized> newChannels) {
         channels.clear();
         channels.addAll(newChannels);
         notifyDataSetChanged();
@@ -87,12 +87,12 @@ public class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.ViewHold
         }
     }
 
-    public Channel getChannel(int position) {
+    public ChannelOptimized getChannel(int position) {
         if (position >= 0 && position < channels.size()) return channels.get(position);
         return null;
     }
 
-    public List<Channel> getChannels() {
+    public List<ChannelOptimized> getChannels() {
         return channels;
     }
 

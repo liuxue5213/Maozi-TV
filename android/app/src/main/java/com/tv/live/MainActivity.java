@@ -150,10 +150,10 @@ public class MainActivity extends AppCompatActivity {
     private View sigBar1, sigBar2, sigBar3, sigBar4;
 
     // ── 数据 ────────────────────────────────────────────────
-    private final List<Channel> allChannels = new ArrayList<>();
+    private final List<ChannelOptimized> allChannels = new ArrayList<>();
     private String currentCategoryId = CategoryHelper.ALL;
     private String searchQuery = "";
-    private Channel currentChannel;
+    private ChannelOptimized currentChannel;
     private final List<String> playHistory = new ArrayList<>(); // 播放历史（频道 ID，新→旧）
     private static final int MAX_HISTORY = 30;
     private int currentResizeMode = RESIZE_MODE_FIT; // 当前画面比例模式
@@ -439,7 +439,7 @@ public class MainActivity extends AppCompatActivity {
     /**
      * 播放指定频道
      */
-    private void playChannel(Channel channel) {
+    private void playChannel(ChannelOptimized channel) {
         currentChannel = channel;
         retryCount = 0;
         channel.currentSourceIndex = 0;
@@ -521,7 +521,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /** 通过频道 ID 查找频道 */
-    private Channel findChannelById(int id) {
+    private ChannelOptimized findChannelById(int id) {
         for (Channel ch : allChannels) if (ch.id == id) return ch;
         return null;
     }
@@ -581,7 +581,7 @@ public class MainActivity extends AppCompatActivity {
     // 频道信息叠加层
     // ══════════════════════════════════════════════════════════
 
-    private void showChannelInfo(Channel channel) {
+    private void showChannelInfo(ChannelOptimized channel) {
         tvChannelName.setText(channel.name);
         tvChannelGroup.setText(channel.group);
         // 频道号小字
@@ -685,13 +685,13 @@ public class MainActivity extends AppCompatActivity {
         GridLayoutManager gridLayout = new GridLayoutManager(this, span);
         channelAdapter = new ChannelAdapter(new ChannelAdapter.OnChannelClickListener() {
             @Override
-            public void onChannelClick(Channel channel, int position) {
+            public void onChannelClick(ChannelOptimized channel, int position) {
                 playChannel(channel);
                 hideChannelPanel();
             }
 
             @Override
-            public boolean onChannelLongClick(Channel channel, int position) {
+            public boolean onChannelLongClick(ChannelOptimized channel, int position) {
                 toggleFavorite(channel);
                 return true;
             }
@@ -774,9 +774,9 @@ public class MainActivity extends AppCompatActivity {
                 Collections.addAll(favSet, favStr.split(","));
             }
 
-            // 解析频道
+            // 解析频道（使用优化模型）
             for (int i = 0; i < chArr.length(); i++) {
-                Channel ch = Channel.fromJson(chArr.getJSONObject(i));
+                ChannelOptimized ch = ChannelOptimized.fromJson(chArr.getJSONObject(i));
                 ch.channelNumber = i + 1; // 频道号从1开始
 
                 // 恢复收藏状态
@@ -864,17 +864,17 @@ public class MainActivity extends AppCompatActivity {
 
     private void refreshChannelGrid() {
         if (channelAdapter != null) channelAdapter.setSearchQuery(searchQuery);
-        List<Channel> filtered = CategoryHelper.filter(allChannels, currentCategoryId, false);
+        List<ChannelOptimized> filtered = CategoryHelper.filter(allChannels, currentCategoryId, false);
         // 应用排序
         applySort(filtered);
         // 历史分类：按观看历史排序（最新在前）
         if (CategoryHelper.HISTORY.equals(currentCategoryId) && !playHistory.isEmpty()) {
-            Map<Integer, Channel> idMap = new java.util.HashMap<>();
-            for (Channel ch : filtered) idMap.put(ch.id, ch);
-            List<Channel> histList = new ArrayList<>();
+            Map<Integer, ChannelOptimized> idMap = new java.util.HashMap<>();
+            for (ChannelOptimized ch : filtered) idMap.put(ch.id, ch);
+            List<ChannelOptimized> histList = new ArrayList<>();
             for (String idStr : playHistory) {
                 try {
-                    Channel ch = idMap.get(Integer.parseInt(idStr));
+                    ChannelOptimized ch = idMap.get(Integer.parseInt(idStr));
                     if (ch != null) histList.add(ch);
                 } catch (NumberFormatException ignored) {}
             }
@@ -896,7 +896,7 @@ public class MainActivity extends AppCompatActivity {
     // 收藏功能
     // ══════════════════════════════════════════════════════════
 
-    private void toggleFavorite(Channel channel) {
+    private void toggleFavorite(ChannelOptimized channel) {
         channel.isFavorite = !channel.isFavorite;
         saveFavorites();
 
@@ -1201,7 +1201,7 @@ public class MainActivity extends AppCompatActivity {
     // 频道排序
     // ══════════════════════════════════════════════════════════
 
-    private void applySort(List<Channel> list) {
+    private void applySort(List<ChannelOptimized> list) {
         switch (currentSortMode) {
             case SORT_NAME:
                 java.util.Collections.sort(list, (a, b) -> a.name.compareTo(b.name));
@@ -1222,7 +1222,7 @@ public class MainActivity extends AppCompatActivity {
     // EPG 节目单
     // ══════════════════════════════════════════════════════════
 
-    private void showEpgDialog(Channel channel) {
+    private void showEpgDialog(ChannelOptimized channel) {
         if (channel == null) return;
         // EPG 暂未接入后端数据源，直接 Toast 提示而非弹空壳对话框
         Toast.makeText(this, channel.name + "：EPG 节目单暂未接入", Toast.LENGTH_SHORT).show();
@@ -1238,6 +1238,7 @@ public class MainActivity extends AppCompatActivity {
                 .setItems(new String[]{
                         "检查更新",
                         "更新频道源 (重新拉取)",
+                        "频道健康检查",
                         "切换播放源",
                         "画质 (自动)",
                         "画面比例 (" + RESIZE_MODE_LABELS[currentResizeMode] + ")",
@@ -1259,6 +1260,28 @@ public class MainActivity extends AppCompatActivity {
                     } else if (which == 1) {
                         refreshChannels();
                     } else if (which == 2) {
+                        runHealthCheck();
+                    } else if (which == 3) {
+                        showSourceSwitchDialog();
+                    } else if (which == 4) {
+                        showQualityDialog();
+                    } else if (which == 5) {
+                        showResizeModeDialog();
+                    } else if (which == 6) {
+                        takeScreenshot();
+                    } else if (which == 7) {
+                        autoSelectFastestSource();
+                    } else if (which == 8) {
+                        cycleSortMode();
+                    } else if (which == 9) {
+                        showThemeDialog();
+                    } else if (which == 10) {
+                        enterPipMode();
+                    } else if (which == 11) {
+                        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+                        prefs.edit().putString(KEY_MODE, "standalone").apply();
+                        Toast.makeText(this, "当前为独立模式", Toast.LENGTH_SHORT).show();
+                    } else {
                         showSourceSwitchDialog();
                     } else if (which == 3) {
                         showQualityDialog();
@@ -1585,7 +1608,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void switchChannelUp() {
         // 面板关闭时上下键换台用「全部频道」，避免面板关闭后列表为空导致无法换台。
-        List<Channel> list = channelAdapter.getChannels();
+        List<ChannelOptimized> list = channelAdapter.getChannels();
         if (list == null || list.isEmpty()) list = allChannels;
         if (list.isEmpty()) return;
         // 用 id 查找当前频道位置（比 indexOf 引用相等更稳妥）
@@ -1603,7 +1626,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void switchChannelDown() {
         // 同上：优先用当前分类列表，为空时回退全部频道。
-        List<Channel> list = channelAdapter.getChannels();
+        List<ChannelOptimized> list = channelAdapter.getChannels();
         if (list == null || list.isEmpty()) list = allChannels;
         if (list.isEmpty()) return;
         int currentIndex = -1;
@@ -1631,6 +1654,54 @@ public class MainActivity extends AppCompatActivity {
         audioManager.adjustStreamVolume(stream,
                 direction > 0 ? AudioManager.ADJUST_RAISE : AudioManager.ADJUST_LOWER,
                 AudioManager.FLAG_SHOW_UI | AudioManager.FLAG_PLAY_SOUND);
+    }
+
+    /**
+     * 频道健康检查功能
+     */
+    private void runHealthCheck() {
+        if (currentChannel == null || currentChannel.sources.isEmpty()) {
+            Toast.makeText(this, "当前频道无源信息", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        showStatus("正在进行健康检查...");
+        
+        // 在后台执行健康检查
+        executor.execute(() -> {
+            int healthyCount = 0;
+            int totalCount = currentChannel.sources.size();
+            List<Integer> healthyIndices = new ArrayList<>();
+
+            for (int i = 0; i < totalCount; i++) {
+                String url = currentChannel.sources.get(i);
+                boolean isHealthy = ChannelHealthChecker.checkUrlHealth(url);
+                if (isHealthy) {
+                    healthyCount++;
+                    healthyIndices.add(i);
+                }
+            }
+
+            int finalHealthyCount = healthyCount;
+            int finalTotalCount = totalCount;
+            List<Integer> finalHealthyIndices = healthyIndices;
+
+            mainHandler.post(() -> {
+                hideStatus();
+                String message = String.format("健康检查完成：可用源 %d/%d", finalHealthyCount, finalTotalCount);
+                Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+                
+                // 如果当前源不健康，切换到第一个健康源
+                if (!finalHealthyIndices.isEmpty() && !finalHealthyIndices.contains(currentChannel.currentSourceIndex)) {
+                    int bestIndex = finalHealthyIndices.get(0);
+                    if (bestIndex != currentChannel.currentSourceIndex) {
+                        currentChannel.currentSourceIndex = bestIndex;
+                        playUrl(currentChannel.getCurrentSourceUrl());
+                        Toast.makeText(this, "自动切换到健康源", Toast.LENGTH_SHORT).show();
+                    }
+                }
+            });
+        });
     }
 
     // ══════════════════════════════════════════════════════════
