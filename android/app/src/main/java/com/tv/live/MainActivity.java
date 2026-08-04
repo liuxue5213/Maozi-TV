@@ -127,11 +127,19 @@ public class MainActivity extends AppCompatActivity {
     private TextView tvPanelCount;
 
     private TextView tvChannelName;
+    private TextView tvChannelNumSmall;
     private TextView tvChannelGroup;
+    private TextView tvEpgNow;
+    private TextView tvResolution;
+    private TextView tvBitrate;
+    private TextView tvSignalText;
     private View channelInfoOverlay;
     private TextView tvSpeed;
     private TextView tvChannelNumber;
     private TextView tvStatus;
+    private View tvStatusContainer;
+    private android.widget.Button btnRetry;
+    private View sigBar1, sigBar2, sigBar3, sigBar4;
 
     // ── 数据 ────────────────────────────────────────────────
     private final List<Channel> allChannels = new ArrayList<>();
@@ -254,11 +262,28 @@ public class MainActivity extends AppCompatActivity {
         etSearch = findViewById(R.id.et_search);
         tvPanelCount = findViewById(R.id.tv_panel_count);
         tvChannelName = findViewById(R.id.tv_channel_name);
+        tvChannelNumSmall = findViewById(R.id.tv_channel_num_small);
         tvChannelGroup = findViewById(R.id.tv_channel_group);
+        tvEpgNow = findViewById(R.id.tv_epg_now);
+        tvResolution = findViewById(R.id.tv_resolution);
+        tvBitrate = findViewById(R.id.tv_bitrate);
+        tvSignalText = findViewById(R.id.tv_signal_text);
         channelInfoOverlay = findViewById(R.id.channel_info_overlay);
         tvSpeed = findViewById(R.id.tv_speed);
         tvChannelNumber = findViewById(R.id.tv_channel_number);
         tvStatus = findViewById(R.id.tv_status);
+        tvStatusContainer = findViewById(R.id.tv_status_container);
+        btnRetry = findViewById(R.id.btn_retry);
+        if (btnRetry != null) {
+            btnRetry.setOnClickListener(v -> {
+                hideStatus();
+                if (currentChannel != null) playChannel(currentChannel);
+            });
+        }
+        sigBar1 = findViewById(R.id.sig_bar1);
+        sigBar2 = findViewById(R.id.sig_bar2);
+        sigBar3 = findViewById(R.id.sig_bar3);
+        sigBar4 = findViewById(R.id.sig_bar4);
 
         etSearch.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
@@ -287,11 +312,16 @@ public class MainActivity extends AppCompatActivity {
 
     private void showStatus(String text) {
         tvStatus.setText(text);
-        tvStatus.setVisibility(View.VISIBLE);
+        if (tvStatusContainer != null) tvStatusContainer.setVisibility(View.VISIBLE);
+        // 错误状态显示重试按钮
+        if (btnRetry != null) {
+            boolean isError = text.contains("失败") || text.contains("不可用") || text.contains("异常");
+            btnRetry.setVisibility(isError ? View.VISIBLE : View.GONE);
+        }
     }
 
     private void hideStatus() {
-        tvStatus.setVisibility(View.GONE);
+        if (tvStatusContainer != null) tvStatusContainer.setVisibility(View.GONE);
     }
 
     // ══════════════════════════════════════════════════════════
@@ -373,12 +403,18 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * 播放指定 URL
+     * 播放指定 URL（带淡入动画）
      */
     private void playUrl(String url) {
         if (player == null || url == null || url.isEmpty()) return;
 
         Log.i(TAG, "播放: " + url);
+
+        // 切台时黑屏渐隐渐显
+        final android.view.View fadeOverlay = findViewById(R.id.channel_info_overlay);
+        android.view.animation.Animation fadeIn = android.view.animation.AnimationUtils.loadAnimation(this, R.anim.fade_in);
+        fadeIn.setDuration(300);
+        if (playerView != null) playerView.startAnimation(fadeIn);
 
         MediaItem mediaItem = new MediaItem.Builder()
                 .setUri(Uri.parse(url))
@@ -480,6 +516,23 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ══════════════════════════════════════════════════════════
+    // 主题切换
+    // ══════════════════════════════════════════════════════════
+
+    private void showThemeDialog() {
+        final String[] themes = {"暗夜 (默认)", "深蓝", "墨绿"};
+        new AlertDialog.Builder(this)
+                .setTitle("选择主题")
+                .setSingleChoiceItems(themes, 0, (dialog, which) -> {
+                    // 主题切换需要重启 Activity 应用新配色
+                    Toast.makeText(this, "主题: " + themes[which] + " (重启后生效)", Toast.LENGTH_SHORT).show();
+                    dialog.dismiss();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    // ══════════════════════════════════════════════════════════
     // 画中画 (PiP)
     // ══════════════════════════════════════════════════════════
 
@@ -503,11 +556,38 @@ public class MainActivity extends AppCompatActivity {
     private void showChannelInfo(Channel channel) {
         tvChannelName.setText(channel.name);
         tvChannelGroup.setText(channel.group);
+        // 频道号小字
+        if (tvChannelNumSmall != null && channel.channelNumber > 0) {
+            tvChannelNumSmall.setText("CH" + channel.channelNumber);
+            tvChannelNumSmall.setVisibility(View.VISIBLE);
+        }
+        // EPG 当前节目（预留）
+        if (tvEpgNow != null) tvEpgNow.setVisibility(View.GONE);
         channelInfoOverlay.setVisibility(View.VISIBLE);
 
         infoOverlayHandler.removeCallbacksAndMessages(null);
         infoOverlayHandler.postDelayed(() ->
                 channelInfoOverlay.setVisibility(View.GONE), INFO_OVERLAY_DURATION);
+    }
+
+    /** 更新信号强度指示器（根据码率分级） */
+    private void updateSignalBars(long bitrateKbps) {
+        if (sigBar1 == null) return;
+        int level = bitrateKbps > 6000 ? 4 : bitrateKbps > 3000 ? 3 : bitrateKbps > 1000 ? 2 : bitrateKbps > 0 ? 1 : 0;
+        int activeColor = level >= 3 ? 0xFF2ECC71 : level >= 2 ? 0xFFFFFFFF : 0xFFE74C3C;
+        setBar(sigBar1, level >= 1, activeColor);
+        setBar(sigBar2, level >= 2, activeColor);
+        setBar(sigBar3, level >= 3, activeColor);
+        setBar(sigBar4, level >= 4, activeColor);
+        if (tvSignalText != null) {
+            tvSignalText.setVisibility(level > 0 ? View.VISIBLE : View.GONE);
+            tvSignalText.setText(level >= 4 ? "4K" : level >= 3 ? "高清" : level >= 2 ? "标清" : "流畅");
+        }
+    }
+
+    private void setBar(View bar, boolean active, int activeColor) {
+        if (bar == null) return;
+        bar.setBackgroundColor(active ? activeColor : 0x33FFFFFF);
     }
 
     // ══════════════════════════════════════════════════════════
@@ -518,14 +598,35 @@ public class MainActivity extends AppCompatActivity {
         speedHandler.postDelayed(new Runnable() {
             @Override
             public void run() {
-                if (player != null && player.getPlaybackState() == Player.STATE_READY
-                        || player != null && player.getPlaybackState() == Player.STATE_BUFFERING) {
+                if (player != null && (player.getPlaybackState() == Player.STATE_READY
+                        || player.getPlaybackState() == Player.STATE_BUFFERING)) {
                     long bitrate = bandwidthMeter.getBitrateEstimate();
                     tvSpeed.setText(formatSpeed(bitrate));
+                    // 更新信号强度
+                    updateSignalBars(bitrate / 1000);
+                    // 更新分辨率信息
+                    if (tvResolution != null && player.getVideoFormat() != null) {
+                        com.google.android.exoplayer2.Format fmt = player.getVideoFormat();
+                        if (fmt.width > 0 && fmt.height > 0) {
+                            tvResolution.setText(fmt.width + "x" + fmt.height);
+                            tvResolution.setVisibility(View.VISIBLE);
+                        }
+                    }
+                    // 更新码率
+                    if (tvBitrate != null && bitrate > 0) {
+                        tvBitrate.setText(formatBitrate(bitrate));
+                        tvBitrate.setVisibility(View.VISIBLE);
+                    }
                 }
                 speedHandler.postDelayed(this, SPEED_REFRESH_INTERVAL);
             }
         }, SPEED_REFRESH_INTERVAL);
+    }
+
+    private String formatBitrate(long bitrateBps) {
+        if (bitrateBps <= 0) return "";
+        if (bitrateBps >= 1000000) return String.format("%.1f Mbps", bitrateBps / 1000000.0);
+        return String.format("%.0f kbps", bitrateBps / 1000.0);
     }
 
     private String formatSpeed(long bitrateBps) {
@@ -586,6 +687,9 @@ public class MainActivity extends AppCompatActivity {
     private void showChannelPanel() {
         panelVisible = true;
         channelPanel.setVisibility(View.VISIBLE);
+        // 滑入动画
+        android.view.animation.Animation slideIn = android.view.animation.AnimationUtils.loadAnimation(this, R.anim.slide_in_right);
+        channelPanel.startAnimation(slideIn);
         refreshCategoryNav();
         refreshChannelGrid();
         panelAutoHideHandler.removeCallbacksAndMessages(null);
@@ -599,8 +703,17 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void hideChannelPanel() {
+        // 滑出动画
+        android.view.animation.Animation slideOut = android.view.animation.AnimationUtils.loadAnimation(this, R.anim.slide_out_right);
+        slideOut.setAnimationListener(new android.view.animation.Animation.AnimationListener() {
+            @Override public void onAnimationStart(android.view.animation.Animation animation) {}
+            @Override public void onAnimationRepeat(android.view.animation.Animation animation) {}
+            @Override public void onAnimationEnd(android.view.animation.Animation animation) {
+                channelPanel.setVisibility(View.GONE);
+            }
+        });
+        channelPanel.startAnimation(slideOut);
         panelVisible = false;
-        channelPanel.setVisibility(View.GONE);
         panelAutoHideHandler.removeCallbacksAndMessages(null);
         playerView.requestFocus();
     }
@@ -722,6 +835,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void refreshChannelGrid() {
+        if (channelAdapter != null) channelAdapter.setSearchQuery(searchQuery);
         List<Channel> filtered = CategoryHelper.filter(allChannels, currentCategoryId, false);
         // 应用排序
         applySort(filtered);
@@ -1105,6 +1219,7 @@ public class MainActivity extends AppCompatActivity {
                         "截图",
                         "测速选最快源",
                         "排序 (" + SORT_LABELS[currentSortMode] + ")",
+                        "主题",
                         "画中画",
                         "独立模式 (Gitee/GitHub)",
                         "服务器模式 (连接后端 API)"
@@ -1131,8 +1246,10 @@ public class MainActivity extends AppCompatActivity {
                     } else if (which == 7) {
                         cycleSortMode();
                     } else if (which == 8) {
-                        enterPipMode();
+                        showThemeDialog();
                     } else if (which == 9) {
+                        enterPipMode();
+                    } else if (which == 10) {
                         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
                         prefs.edit().putString(KEY_MODE, "standalone").apply();
                         Toast.makeText(this, "当前为独立模式", Toast.LENGTH_SHORT).show();
@@ -1307,6 +1424,26 @@ public class MainActivity extends AppCompatActivity {
 
             case KeyEvent.KEYCODE_DPAD_RIGHT:
                 adjustVolume(1);
+                return true;
+
+            // ═══ 颜色键（红绿黄蓝）═══
+            case KeyEvent.KEYCODE_PROPS:           // 红键 (部分遥控器)
+            case KeyEvent.KEYCODE_F1:              // 红键备选
+            case KeyEvent.KEYCODE_RED:             // Android 标准红键
+                // 红键 = 收藏/取消收藏
+                if (currentChannel != null) toggleFavorite(currentChannel);
+                return true;
+            case KeyEvent.KEYCODE_GREEN:           // 绿键 = EPG 节目单
+            case KeyEvent.KEYCODE_F2:
+                if (currentChannel != null) showEpgDialog(currentChannel);
+                return true;
+            case KeyEvent.KEYCODE_F3:              // 黄键 = 切换源
+            case KeyEvent.KEYCODE_YELLOW:
+                if (currentChannel != null && currentChannel.sources.size() > 1) showSourceSwitchDialog();
+                return true;
+            case KeyEvent.KEYCODE_F4:              // 蓝键 = 画质切换
+            case KeyEvent.KEYCODE_BLUE:
+                showQualityDialog();
                 return true;
 
             // BACK 键：长按退出（短按交给系统默认退出行为）

@@ -151,6 +151,10 @@ const state = {
     currentFavGroup: '默认',
     // 是否在多画面模式
     multiviewMode: false,
+    // 当前主题 ('dark'|'blue'|'green')
+    theme: localStorage.getItem('maozi_theme') || 'dark',
+    // 预览窗定时器
+    previewTimer: null,
     // 播放历史（最近观看频道名列表，最多 30 条，新→旧）
     playHistory: loadPlayHistory(),
     // 频道号快速跳转缓冲（数字键累积）
@@ -618,6 +622,30 @@ function takeSnapshot() {
 
 let multiviewPlayers = [];
 
+// ── 频道预览窗（焦点悬停预览）────────────────────────────
+
+function startPreview(channel) {
+    if (state.previewTimer) clearTimeout(state.previewTimer);
+    if (!channel || !channel.url) return;
+    // 预览：300ms 后在角落显示小窗
+    state.previewTimer = setTimeout(() => {
+        let pv = document.getElementById('preview-window');
+        if (!pv) {
+            pv = document.createElement('div');
+            pv.id = 'preview-window';
+            pv.style.cssText = 'position:fixed;bottom:80px;right:20px;width:240px;height:135px;background:#000;border-radius:8px;overflow:hidden;z-index:200;box-shadow:0 4px 20px rgba(0,0,0,0.6);border:2px solid var(--accent);';
+            document.body.appendChild(pv);
+        }
+        pv.innerHTML = '<div style="position:absolute;bottom:0;left:0;right:0;padding:4px 8px;background:rgba(0,0,0,0.7);color:#fff;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + channel.name + '</div><div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary);font-size:12px;">📡 预览加载...</div>';
+    }, 500);
+}
+
+function stopPreview() {
+    if (state.previewTimer) clearTimeout(state.previewTimer);
+    const pv = document.getElementById('preview-window');
+    if (pv) pv.remove();
+}
+
 function toggleMultiview() {
     state.multiviewMode = !state.multiviewMode;
     const container = dom.videoContainer;
@@ -658,6 +686,30 @@ function showChannelNumber(index) {
     state.channelNumberTimer = setTimeout(() => {
         dom.channelNumberOsd.classList.remove('show');
     }, 2000);
+}
+
+// ── 主题引擎 ──────────────────────────────────────────────
+
+function applyTheme(theme) {
+    state.theme = theme;
+    localStorage.setItem('maozi_theme', theme);
+    const root = document.documentElement;
+    const themes = {
+        dark:  { bg: '#0a0a0f', accent: '#4a9eff', card: '#1a1a2e' },
+        blue:  { bg: '#0a1628', accent: '#3b82f6', card: '#1e293b' },
+        green: { bg: '#0a1f0a', accent: '#22c55e', card: '#1a2e1a' },
+    };
+    const t = themes[theme] || themes.dark;
+    root.style.setProperty('--bg-primary', t.bg);
+    root.style.setProperty('--accent', t.accent);
+    root.style.setProperty('--bg-card', t.card);
+    showOsd('主题: ' + (theme === 'dark' ? '暗夜' : theme === 'blue' ? '深蓝' : '墨绿'));
+}
+
+function cycleTheme() {
+    const order = ['dark', 'blue', 'green'];
+    const cur = order.indexOf(state.theme);
+    applyTheme(order[(cur + 1) % order.length]);
 }
 
 // ── Channel info panel ───────────────────────────────
@@ -835,6 +887,8 @@ async function fetchChannels() {
         ? `${API_BASE}/api/channels?visible_only=true&healthy_only=true`
         : `${API_BASE}/api/channels?visible_only=true`;
 
+    showSkeletonLoading(); // 显示骨架屏
+
     try {
         const resp = await fetch(url);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -945,6 +999,11 @@ function playChannel(index, isSourceSwitch = false) {
 
     // 显示频道号
     showChannelNumber(index);
+
+    // 切台淡入动画
+    dom.video.style.opacity = '0';
+    dom.video.style.transition = 'opacity 0.3s';
+    setTimeout(() => { dom.video.style.opacity = '1'; }, 50);
 
     destroyPlayer();
 
@@ -1537,13 +1596,13 @@ function showOverlay(type, text, subtext = '') {
             dom.overlayIcon.textContent = '📡';
             dom.spinner.classList.remove('hidden');
             dom.overlayText.textContent = text;
-            dom.overlaySubtext.textContent = subtext;
+            dom.overlaySubtext.textContent = subtext || '正在连接服务器...';
             break;
         case 'error':
             dom.overlayIcon.textContent = '⚠️';
             dom.errorEl.classList.remove('hidden');
             dom.errorMsg.textContent = text;
-            dom.overlaySubtext.textContent = subtext;
+            dom.overlaySubtext.textContent = subtext || '请检查网络或切换频道';
             break;
         case 'empty':
             dom.overlayIcon.textContent = '📺';
@@ -1660,6 +1719,18 @@ function buildRenderQueue(startIdx, endIdx) {
     }
     
     return { items: queue, totalCount: globalIdx };
+}
+
+/** 显示骨架屏加载态（频道列表加载时） */
+function showSkeletonLoading(count = 8) {
+    if (!dom.channelList) return;
+    dom.channelList.innerHTML = '';
+    for (let i = 0; i < count; i++) {
+        const card = document.createElement('div');
+        card.className = 'skeleton-card';
+        card.innerHTML = '<div class="skeleton skeleton-logo"></div><div style="flex:1"><div class="skeleton skeleton-text" style="margin-bottom:6px"></div><div class="skeleton skeleton-text-short"></div></div>';
+        dom.channelList.appendChild(card);
+    }
 }
 
 function renderChannelList() {
@@ -1957,11 +2028,16 @@ function setupNavigation() {
                 e.preventDefault();
                 autoSelectFastestSource();
                 break;
-            // 切换画面比例: R
+            // 切换画面比例: R / 主题: C / 预览: P
             case 'r':
             case 'R':
                 e.preventDefault();
                 cycleAspectRatio();
+                break;
+            case 'c':
+            case 'C':
+                e.preventDefault();
+                cycleTheme();
                 break;
             // 频道排序: G
             case 'g':

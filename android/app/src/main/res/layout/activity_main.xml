@@ -25,7 +25,7 @@
             app:show_buffering="when_playing"
             app:use_controller="false" />
 
-        <!-- 当前频道 OSD -->
+        <!-- 当前频道 OSD（增强：EPG + 码率 + 分辨率 + 信号格） -->
         <LinearLayout
             android:id="@+id/channel_info_overlay"
             android:layout_width="wrap_content"
@@ -41,21 +41,102 @@
             android:paddingBottom="12dp"
             android:visibility="gone">
 
-            <TextView
-                android:id="@+id/tv_channel_name"
+            <!-- 频道名 + 频道号 -->
+            <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:textColor="#FFFFFF"
-                android:textSize="22sp"
-                android:textStyle="bold" />
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+                <TextView
+                    android:id="@+id/tv_channel_name"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="#FFFFFF"
+                    android:textSize="22sp"
+                    android:textStyle="bold" />
+                <TextView
+                    android:id="@+id/tv_channel_num_small"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:textColor="#4A9EFF"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+            </LinearLayout>
 
+            <!-- EPG 当前节目 -->
+            <TextView
+                android:id="@+id/tv_epg_now"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FFD700"
+                android:textSize="12sp"
+                android:layout_marginTop="2dp"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:visibility="gone" />
+
+            <!-- 分组 -->
             <TextView
                 android:id="@+id/tv_channel_group"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:textColor="#B3FFFFFF"
                 android:textSize="13sp"
-                android:layout_marginTop="4dp" />
+                android:layout_marginTop="2dp" />
+
+            <!-- 画质/码率/分辨率 信息行 -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="4dp"
+                android:gravity="center_vertical">
+                <TextView
+                    android:id="@+id/tv_resolution"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="#9090A0"
+                    android:textSize="11sp"
+                    android:visibility="gone" />
+                <TextView
+                    android:id="@+id/tv_bitrate"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:textColor="#9090A0"
+                    android:textSize="11sp"
+                    android:visibility="gone" />
+            </LinearLayout>
+
+            <!-- 信号强度指示器 -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="4dp"
+                android:gravity="center_vertical">
+                <LinearLayout
+                    android:id="@+id/signal_bars"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="bottom">
+                    <View android:id="@+id/sig_bar1" android:layout_width="3dp" android:layout_height="4dp" android:layout_marginEnd="1dp" android:background="#33FFFFFF" />
+                    <View android:id="@+id/sig_bar2" android:layout_width="3dp" android:layout_height="7dp" android:layout_marginEnd="1dp" android:background="#33FFFFFF" />
+                    <View android:id="@+id/sig_bar3" android:layout_width="3dp" android:layout_height="10dp" android:layout_marginEnd="1dp" android:background="#33FFFFFF" />
+                    <View android:id="@+id/sig_bar4" android:layout_width="3dp" android:layout_height="13dp" android:background="#33FFFFFF" />
+                </LinearLayout>
+                <TextView
+                    android:id="@+id/tv_signal_text"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:textColor="#9090A0"
+                    android:textSize="10sp"
+                    android:visibility="gone" />
+            </LinearLayout>
         </LinearLayout>
 
         <TextView
@@ -88,16 +169,37 @@
             android:shadowRadius="12"
             android:visibility="gone" />
 
-        <TextView
-            android:id="@+id/tv_status"
+        <!-- 状态/错误提示（增强：文字 + 重试按钮） -->
+        <LinearLayout
+            android:id="@+id/tv_status_container"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
-            android:textColor="#FFFFFF"
-            android:textSize="16sp"
+            android:orientation="vertical"
+            android:gravity="center"
             android:background="@drawable/bg_osd_panel"
-            android:padding="16dp"
-            android:visibility="gone" />
+            android:padding="20dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/tv_status"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFF"
+                android:textSize="16sp" />
+
+            <Button
+                android:id="@+id/btn_retry"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:layout_marginTop="12dp"
+                android:text="重试"
+                android:textColor="#FFFFFF"
+                android:background="@drawable/bg_search_input"
+                android:paddingStart="24dp"
+                android:paddingEnd="24dp"
+                android:visibility="gone" />
+        </LinearLayout>
     </FrameLayout>
 
     <!-- 全屏选台面板 -->

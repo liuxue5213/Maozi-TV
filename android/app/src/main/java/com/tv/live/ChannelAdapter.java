@@ -1,8 +1,14 @@
 package com.tv.live;
 
+import android.graphics.Color;
+import android.text.Spannable;
+import android.text.SpannableString;
+import android.text.style.ForegroundColorSpan;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.animation.Animation;
+import android.view.animation.ScaleAnimation;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -12,6 +18,7 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * 频道网格卡片适配器。
@@ -20,7 +27,12 @@ public class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.ViewHold
 
     private final List<Channel> channels = new ArrayList<>();
     private int selectedChannelId = -1;
+    private String searchQuery = "";
     private OnChannelClickListener listener;
+
+    public void setSearchQuery(String query) {
+        searchQuery = query != null ? query.toLowerCase(Locale.ROOT) : "";
+    }
 
     public interface OnChannelClickListener {
         void onChannelClick(Channel channel, int position);
@@ -104,7 +116,16 @@ public class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.ViewHold
         Channel ch = channels.get(position);
         boolean playing = ch.id == selectedChannelId;
 
-        holder.tvName.setText(ch.name);
+        // 搜索高亮
+        if (searchQuery != null && !searchQuery.isEmpty() && ch.name.toLowerCase(Locale.ROOT).contains(searchQuery)) {
+            SpannableString highlight = new SpannableString(ch.name);
+            int start = ch.name.toLowerCase(Locale.ROOT).indexOf(searchQuery);
+            int end = start + searchQuery.length();
+            highlight.setSpan(new ForegroundColorSpan(Color.YELLOW), start, end, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+            holder.tvName.setText(highlight);
+        } else {
+            holder.tvName.setText(ch.name);
+        }
 
         if (ch.channelNumber > 0) {
             holder.tvNumber.setVisibility(View.VISIBLE);
@@ -123,12 +144,15 @@ public class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.ViewHold
         holder.tvPlaying.setVisibility(playing ? View.VISIBLE : View.GONE);
         holder.cardRoot.setActivated(playing);
 
+        // Logo 统一处理：统一占位图 + 圆角 + 尺寸标准化
+        holder.ivLogo.setScaleType(ImageView.ScaleType.FIT_CENTER);
         if (ch.logo != null && !ch.logo.isEmpty()) {
             try {
                 com.bumptech.glide.Glide.with(holder.itemView.getContext())
                         .load(ch.logo)
                         .placeholder(R.drawable.ic_channel_placeholder)
                         .error(R.drawable.ic_channel_placeholder)
+                        .fitCenter()
                         .into(holder.ivLogo);
             } catch (Exception e) {
                 holder.ivLogo.setImageResource(R.drawable.ic_channel_placeholder);
@@ -150,6 +174,27 @@ public class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.ViewHold
                 return listener.onChannelLongClick(channels.get(pos), pos);
             }
             return false;
+        });
+
+        // 焦点动画：放大 + 边框高亮
+        holder.itemView.setOnFocusChangeListener((v, hasFocus) -> {
+            if (hasFocus) {
+                ScaleAnimation scale = new ScaleAnimation(1f, 1.06f, 1f, 1.06f,
+                        Animation.RELATIVE_TO_SELF, 0.5f, Animation.RELATIVE_TO_SELF, 0.5f);
+                scale.setDuration(150);
+                scale.setFillAfter(true);
+                v.startAnimation(scale);
+                holder.cardRoot.setBackgroundResource(R.drawable.bg_channel_card_focused);
+                v.setElevation(8f);
+            } else {
+                ScaleAnimation scale = new ScaleAnimation(1.06f, 1f, 1.06f, 1f,
+                        Animation.RELATIVE_TO_SELF, 0.5f, Animation.RELATIVE_TO_SELF, 0.5f);
+                scale.setDuration(150);
+                scale.setFillAfter(true);
+                v.startAnimation(scale);
+                holder.cardRoot.setBackgroundResource(R.drawable.bg_channel_card);
+                v.setElevation(0f);
+            }
         });
     }
 

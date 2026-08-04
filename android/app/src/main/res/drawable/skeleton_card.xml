@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 频道卡片骨架屏 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#22FFFFFF" />
+            <corners android:radius="12dp" />
+        </shape>
+    </item>
+    <!-- Logo 占位 -->
+    <item android:left="20dp" android:right="20dp" android:top="10dp" android:height="64dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#33FFFFFF" />
+            <corners android:radius="8dp" />
+        </shape>
+    </item>
+    <!-- 名称占位 -->
+    <item android:left="16dp" android:right="16dp" android:top="84dp" android:height="14dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#33FFFFFF" />
+            <corners android:radius="4dp" />
+        </shape>
+    </item>
+</layer-list>
