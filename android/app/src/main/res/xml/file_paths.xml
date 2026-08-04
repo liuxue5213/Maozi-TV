@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider 路径配置：允许暴露应用缓存目录下的 APK 用于安装 -->
+<paths>
+    <external-cache-path name="apk_updates" path="updates/" />
+    <cache-path name="cache_updates" path="updates/" />
+</paths>

@@ -11,8 +11,8 @@ import java.util.Map;
  */
 public final class CategoryHelper {
 
-    public static final String ALL = "全部";
-    public static final String FAV = "收藏";
+    public static final String ALL = "all";
+    public static final String FAV = "fav";
 
     public static class Category {
         public final String id;
@@ -42,8 +42,8 @@ public final class CategoryHelper {
 
     public static List<Category> getNavCategories() {
         List<Category> list = new ArrayList<>();
-        list.add(new Category("all", ALL, "📋"));
-        list.add(new Category("fav", FAV, "⭐"));
+        list.add(new Category(ALL, "全部", "📋"));
+        list.add(new Category(FAV, "收藏", "⭐"));
         for (Category c : SMART_CATEGORIES) {
             list.add(c);
         }

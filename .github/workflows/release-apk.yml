@@ -1,0 +1,85 @@
+name: Release APK
+
+# 打 tag (v2.1.0) 时自动编译 Release APK 并发布到 GitHub Releases
+# 发布后 APK 固定地址: https://github.com/liuxue5213/Maozi-TV/releases/latest/download/MaoziTV.apk
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # 发布 Release 需要
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: 设置 Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: 安装 SDK 组件
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install \
+            "platforms;android-34" \
+            "build-tools;34.0.0" 2>&1 | tail -5
+
+      - name: 缓存 Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('android/**/*.gradle.kts', 'android/**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: 生成 Gradle Wrapper（若不存在）
+        working-directory: ./android
+        run: |
+          if [ ! -f gradlew ]; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq wget unzip
+            wget -q https://services.gradle.org/distributions/gradle-8.5-bin.zip -O /tmp/gradle.zip
+            unzip -q /tmp/gradle.zip -d /tmp/gradle
+            /tmp/gradle/gradle-8.5/bin/gradle wrapper --gradle-version=8.5
+          fi
+          chmod +x gradlew
+
+      - name: 编译 Release APK
+        working-directory: ./android
+        run: ./gradlew assembleRelease
+
+      - name: 重命名为固定文件名
+        working-directory: ./android
+        run: |
+          cp app/build/outputs/apk/release/app-release.apk MaoziTV.apk
+          ls -lh MaoziTV.apk
+
+      - name: 获取版本号
+        id: ver
+        run: |
+          TAG=${GITHUB_REF##*/}
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: 发布 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          body: |
+            ## 自动构建版本 ${{ steps.ver.outputs.tag }}
+
+            📲 **手机/电视盒直接安装更新**：打开 App → 设置 → 检查更新即可。
+
+            或手动下载下方 `MaoziTV.apk` 安装。
+          files: android/MaoziTV.apk
+          make_latest: true

@@ -1,0 +1,9 @@
+{
+  "versionCode": 3,
+  "versionName": "2.1.0",
+  "releaseNotes": "修复分类过滤 + 新增应用内自动更新",
+  "apkUrl": "https://github.com/liuxue5213/Maozi-TV/releases/latest/download/MaoziTV.apk",
+  "apkUrlMirror": "https://gitee.com/liuxue5213/maozi-tv/releases/download/v2.1.0/MaoziTV.apk",
+  "minSupportVersionCode": 1,
+  "updateTime": "2026-08-04"
+}

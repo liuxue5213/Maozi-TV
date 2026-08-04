@@ -127,6 +127,10 @@ public class MainActivity extends AppCompatActivity {
     private final Handler infoOverlayHandler = new Handler(Looper.getMainLooper());
     private static final long INFO_OVERLAY_DURATION = 5000;
 
+    // ── 应用内自动更新 ──────────────────────────────────────
+    private UpdateChecker updateChecker;
+    private static final long UPDATE_CHECK_DELAY = 4000; // 启动后 4s 静默检查
+
     // ── 网速刷新 ────────────────────────────────────────────
     private final Handler speedHandler = new Handler(Looper.getMainLooper());
     private static final long SPEED_REFRESH_INTERVAL = 1000;
@@ -161,6 +165,11 @@ public class MainActivity extends AppCompatActivity {
 
         // 拉取频道数据
         executor.execute(this::fetchChannelsJson);
+
+        // 启动后静默检查更新（延迟，避免与频道加载抢带宽）
+        updateChecker = new UpdateChecker(this);
+        new Handler(Looper.getMainLooper())
+                .postDelayed(() -> updateChecker.checkForUpdate(true), UPDATE_CHECK_DELAY);
     }
 
     @Override
@@ -782,16 +791,24 @@ public class MainActivity extends AppCompatActivity {
         new AlertDialog.Builder(this)
                 .setTitle("设置")
                 .setItems(new String[]{
+                        "检查更新",
                         "更新频道源 (重新拉取)",
                         "切换播放源",
                         "独立模式 (Gitee/GitHub)",
                         "服务器模式 (连接后端 API)"
                 }, (dialog, which) -> {
                     if (which == 0) {
-                        refreshChannels();
+                        if (updateChecker != null) {
+                            updateChecker.checkForUpdate(false);
+                        } else {
+                            updateChecker = new UpdateChecker(this);
+                            updateChecker.checkForUpdate(false);
+                        }
                     } else if (which == 1) {
-                        showSourceSwitchDialog();
+                        refreshChannels();
                     } else if (which == 2) {
+                        showSourceSwitchDialog();
+                    } else if (which == 3) {
                         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
                         prefs.edit().putString(KEY_MODE, "standalone").apply();
                         Toast.makeText(this, "当前为独立模式", Toast.LENGTH_SHORT).show();
