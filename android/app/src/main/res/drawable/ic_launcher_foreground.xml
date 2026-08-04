@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    帽子TV 应用图标前景 — 复古显像管电视。
+    Vector Drawable，自适应所有分辨率。
+
+    布局（viewport 108x108，安全区 ~66dp 居中）：
+      - 上方：兔耳天线（两根斜杆 + 圆头）
+      - 中间：CRT 电视机身（圆角矩形 + 旋钮）
+      - 屏幕：蓝绿渐变 + 中心红色播放键
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- ══ 天线：左杆 ══ -->
+    <path
+        android:pathData="M42,38 L33,22"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3"
+        android:strokeLineCap="round" />
+    <!-- 天线左圆头 -->
+    <path
+        android:pathData="M33,22 m-3.5,0 a3.5,3.5 0 1,0 7,0 a3.5,3.5 0 1,0 -7,0"
+        android:fillColor="#FFFFFF" />
+
+    <!-- ══ 天线：右杆 ══ -->
+    <path
+        android:pathData="M66,38 L75,22"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3"
+        android:strokeLineCap="round" />
+    <!-- 天线右圆头 -->
+    <path
+        android:pathData="M75,22 m-3.5,0 a3.5,3.5 0 1,0 7,0 a3.5,3.5 0 1,0 -7,0"
+        android:fillColor="#FFFFFF" />
+
+    <!-- ══ 电视机身（圆角矩形，暖白色）══ -->
+    <path
+        android:pathData="
+            M34,40
+            L74,40
+            Q80,40 80,46
+            L80,82
+            Q80,88 74,88
+            L34,88
+            Q28,88 28,82
+            L28,46
+            Q28,40 34,40 Z"
+        android:fillColor="#F5F5F0" />
+
+    <!-- ══ 屏幕：深蓝黑底圆角矩形 ══ -->
+    <path
+        android:pathData="
+            M37,45
+            L71,45
+            Q74,45 74,48
+            L74,72
+            Q74,75 71,75
+            L37,75
+            Q34,75 34,72
+            L34,48
+            Q34,45 37,45 Z"
+        android:fillColor="#1A3A5C" />
+
+    <!-- ══ 屏幕扫描线（复古 CRT 质感）══ -->
+    <path
+        android:pathData="M35,52 L73,52"
+        android:strokeColor="#2D5A82"
+        android:strokeWidth="0.8" />
+    <path
+        android:pathData="M35,58 L73,58"
+        android:strokeColor="#2D5A82"
+        android:strokeWidth="0.8" />
+    <path
+        android:pathData="M35,64 L73,64"
+        android:strokeColor="#2D5A82"
+        android:strokeWidth="0.8" />
+    <path
+        android:pathData="M35,70 L73,70"
+        android:strokeColor="#2D5A82"
+        android:strokeWidth="0.8" />
+
+    <!-- ══ 中心播放键（红色三角）══ -->
+    <path
+        android:pathData="M48,55 L48,67 L60,61 Z"
+        android:fillColor="#E74C3C" />
+
+    <!-- ══ 底部旋钮（两个）══ -->
+    <path
+        android:pathData="M40,80 m-2.5,0 a2.5,2.5 0 1,0 5,0 a2.5,2.5 0 1,0 -5,0"
+        android:fillColor="#999999" />
+    <path
+        android:pathData="M49,80 m-2.5,0 a2.5,2.5 0 1,0 5,0 a2.5,2.5 0 1,0 -5,0"
+        android:fillColor="#999999" />
+
+    <!-- ══ 电源指示灯（绿色 LED）══ -->
+    <path
+        android:pathData="M66,80 m-1.8,0 a1.8,1.8 0 1,0 3.6,0 a1.8,1.8 0 1,0 -3.6,0"
+        android:fillColor="#2ECC71" />
+
+</vector>
