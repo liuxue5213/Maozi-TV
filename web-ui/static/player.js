@@ -140,6 +140,29 @@ const state = {
     loadingMore: false,     // 是否正在加载更多
     // Logo 懒加载观察器
     logoObserver: null,
+    // 画面比例 (''=默认, '16:9', '4/3', 'stretch', 'zoom')
+    aspectRatio: '',
+    // 频道排序模式 ('default'|'name'|'group')
+    sortMode: 'default',
+    // EPG 节目单数据（当前频道）
+    currentEpg: null,
+    // 自定义收藏夹（多分组，key=分组名，value=频道名数组）
+    favoriteGroups: loadFavoriteGroups(),
+    currentFavGroup: '默认',
+    // 是否在多画面模式
+    multiviewMode: false,
+    // 播放历史（最近观看频道名列表，最多 30 条，新→旧）
+    playHistory: loadPlayHistory(),
+    // 频道号快速跳转缓冲（数字键累积）
+    channelNumberBuffer: '',
+    channelNumberJumpTimer: null,
+    // 多源测速缓存（host → 测速结果 ms）
+    speedTestCache: {},
+    // 音轨 / 字幕（hls.js 轨道）
+    audioTracks: [],
+    subtitleTracks: [],
+    currentAudioTrack: -1,
+    currentSubtitleTrack: -1,
 };
 
 // ── Favorites (localStorage-persisted channel names) ────────
@@ -165,6 +188,95 @@ function saveFavorites() {
 
 function isFavorite(channelName) {
     return state.favorites.includes(channelName);
+}
+
+// ── 播放历史 (localStorage) ──────────────────────────────
+
+const HISTORY_STORAGE_KEY = 'maozi_play_history';
+const MAX_HISTORY = 30;
+
+function loadPlayHistory() {
+    try {
+        const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
+        return raw ? JSON.parse(raw) : [];
+    } catch {
+        return [];
+    }
+}
+
+function savePlayHistory() {
+    try {
+        localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(state.playHistory));
+    } catch { /* ignore */ }
+}
+
+/** 记录一次频道观看（名去重 + 移到最前 + 限 30 条） */
+function addToHistory(channelName) {
+    if (!channelName) return;
+    const idx = state.playHistory.indexOf(channelName);
+    if (idx >= 0) state.playHistory.splice(idx, 1);
+    state.playHistory.unshift(channelName);
+    if (state.playHistory.length > MAX_HISTORY) state.playHistory.length = MAX_HISTORY;
+    savePlayHistory();
+}
+
+/** 通过频道名在 allChannels 里查找频道对象 */
+function findChannelByName(name) {
+    return state.allChannels.find(ch => ch.name === name) || null;
+}
+
+// ── 频道排序 ──────────────────────────────────────────────
+
+function sortChannelList(list) {
+    const mode = state.sortMode;
+    if (mode === 'name') {
+        list.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+    } else if (mode === 'group') {
+        list.sort((a, b) => (a.group || '').localeCompare(b.group || '', 'zh-CN'));
+    }
+    // 'default' 保持原始顺序
+    return list;
+}
+
+function cycleSortMode() {
+    const modes = ['default', 'name', 'group'];
+    const labels = ['默认排序', '按名称', '按分组'];
+    const cur = modes.indexOf(state.sortMode);
+    const next = modes[(cur + 1) % modes.length];
+    state.sortMode = next;
+    showOsd('排序: ' + labels[(cur + 1) % modes.length]);
+    applyFiltersAndRender();
+}
+
+// ── 自定义收藏夹（多分组）─────────────────────────────────
+
+const FAV_GROUPS_STORAGE_KEY = 'maozi_fav_groups';
+
+function loadFavoriteGroups() {
+    try {
+        const raw = localStorage.getItem(FAV_GROUPS_STORAGE_KEY);
+        if (raw) return JSON.parse(raw);
+    } catch { /* ignore */ }
+    // 默认结构：从旧版 favorites 迁移
+    const favs = loadFavorites();
+    return favs.length > 0 ? { '默认': favs } : {};
+}
+
+function saveFavoriteGroups() {
+    try {
+        localStorage.setItem(FAV_GROUPS_STORAGE_KEY, JSON.stringify(state.favoriteGroups));
+    } catch { /* ignore */ }
+}
+
+// ── EPG 节目单 ──────────────────────────────────────────────
+
+function fetchEpg(channelName) {
+    // EPG 由后端提供（若支持），这里预留接口
+    if (state.mode !== 'api') { state.currentEpg = null; return; }
+    fetch(`${API_BASE}/api/epg?name=${encodeURIComponent(channelName)}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => { state.currentEpg = data; })
+        .catch(() => { state.currentEpg = null; });
 }
 
 function toggleFavorite(channelName) {
@@ -224,6 +336,76 @@ function syncVolumeSlider() {
     if (icon) {
         icon.textContent = v.muted || v.volume === 0 ? '🔇' : v.volume < 0.5 ? '🔉' : '🔊';
     }
+}
+
+// ── 画面比例切换 ──────────────────────────────────────────
+
+const ASPECT_CYCLES = ['', '16:9', '4:3', 'stretch', 'zoom'];
+const ASPECT_LABELS = { '': '原始', '16:9': '16:9', '4:3': '4:3', 'stretch': '拉伸', 'zoom' : '缩放' };
+
+function applyAspectRatio(ratio) {
+    const v = state.videoEl;
+    if (!v) return;
+    state.aspectRatio = ratio;
+    switch (ratio) {
+        case '16:9':  v.style.objectFit = 'cover'; v.style.aspectRatio = '16/9'; break;
+        case '4:3':   v.style.objectFit = 'cover'; v.style.aspectRatio = '4/3';  break;
+        case 'stretch': v.style.objectFit = 'fill'; v.style.aspectRatio = 'auto'; break;
+        case 'zoom':  v.style.objectFit = 'cover'; v.style.aspectRatio = 'auto'; break;
+        default:      v.style.objectFit = 'contain'; v.style.aspectRatio = 'auto'; break;
+    }
+    // 更新按钮文字
+    if (dom.btnAspect) dom.btnAspect.textContent = ASPECT_LABELS[ratio] || '比例';
+    showOsd('画面比例: ' + (ASPECT_LABELS[ratio] || '原始'));
+}
+
+function cycleAspectRatio() {
+    const cur = ASPECT_CYCLES.indexOf(state.aspectRatio);
+    const next = ASPECT_CYCLES[(cur + 1) % ASPECT_CYCLES.length];
+    applyAspectRatio(next);
+}
+
+// ── 频道号快速跳转（数字键累积）─────────────────────────
+
+function handleChannelNumberDigit(digit) {
+    state.channelNumberBuffer += String(digit);
+    // 显示当前输入
+    if (dom.channelNumberOsd) {
+        dom.channelNumberOsd.textContent = 'CH ' + state.channelNumberBuffer;
+        dom.channelNumberOsd.classList.add('show');
+    }
+    // 重置超时
+    if (state.channelNumberJumpTimer) clearTimeout(state.channelNumberJumpTimer);
+    state.channelNumberJumpTimer = setTimeout(() => {
+        executeChannelNumberJump();
+    }, 3000);
+}
+
+function executeChannelNumberJump() {
+    if (!state.channelNumberBuffer) return;
+    const num = parseInt(state.channelNumberBuffer, 10);
+    state.channelNumberBuffer = '';
+    if (dom.channelNumberOsd) dom.channelNumberOsd.classList.remove('show');
+    if (isNaN(num) || num < 1 || num > state.allChannels.length) {
+        showOsd('频道号超出范围 (1-' + state.allChannels.length + ')');
+        return;
+    }
+    // 在全频道列表里跳转
+    const target = state.allChannels[num - 1];
+    if (!target) return;
+    // 切到该频道所在分组并播放
+    const list = state.channels;
+    let idx = list.findIndex(ch => ch.name === target.name);
+    if (idx < 0) {
+        // 频道不在当前过滤列表，临时切换到全部
+        state.searchQuery = '';
+        if (dom.searchInput) dom.searchInput.value = '';
+        state.tabMode = 'all';
+        state.regionMode = 'domestic';
+        applyFiltersAndRender();
+        idx = state.channels.findIndex(ch => ch.name === target.name);
+    }
+    if (idx >= 0) playChannel(idx);
 }
 
 function showVolumeOsd() {
@@ -301,6 +483,7 @@ const dom = {
     tabAll: $('#tab-all'),
     tabHealthy: $('#tab-healthy'),
     tabFav: $('#tab-fav'),
+    tabHistory: $('#tab-history'),
     regionDomestic: $('#region-domestic'),
     regionInternational: $('#region-international'),
     volumeOsd: $('#volume-osd'),
@@ -328,6 +511,8 @@ const dom = {
     btnPlayPause: $('#btn-play-pause'),
     btnSource: $('#btn-source'),
     btnQuality: $('#btn-quality'),
+    btnAspect: $('#btn-aspect'),
+    btnSnapshot: $('#btn-snapshot'),
     btnFullscreen: $('#btn-fullscreen'),
     volumeSlider: $('#volume-slider'),
     volIcon: $('#vol-icon'),
@@ -400,6 +585,70 @@ function hideControls() {
 }
 
 // ── Channel number OSD ───────────────────────────────
+
+// ── 截图功能 ──────────────────────────────────────────────
+
+function takeSnapshot() {
+    const v = state.videoEl;
+    if (!v || !v.videoWidth) {
+        showOsd('无法截图：视频未就绪');
+        return;
+    }
+    try {
+        const canvas = document.createElement('canvas');
+        canvas.width = v.videoWidth;
+        canvas.height = v.videoHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL('image/png');
+        // 自动下载
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = 'MaoziTV_' + (state.channels[state.activeIndex]?.name || 'snapshot') + '_' + Date.now() + '.png';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        showOsd('截图已保存');
+    } catch (err) {
+        showOsd('截图失败: ' + err.message);
+    }
+}
+
+// ── 多画面模式（Web 端：同屏显示 4 个频道）─────────────
+
+let multiviewPlayers = [];
+
+function toggleMultiview() {
+    state.multiviewMode = !state.multiviewMode;
+    const container = dom.videoContainer;
+    if (state.multiviewMode) {
+        // 创建 2x2 网格
+        container.innerHTML = '';
+        multiviewPlayers = [];
+        const indices = [0, 1, 2, 3].map(i => (state.activeIndex + i) % state.channels.length);
+        for (let i = 0; i < 4; i++) {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'multiview-cell';
+            wrapper.style.cssText = 'position:relative;width:50%;height:50%;float:left;';
+            const ch = state.channels[indices[i]];
+            const label = document.createElement('span');
+            label.textContent = ch ? ch.name : '';
+            label.style.cssText = 'position:absolute;top:4px;left:8px;color:#fff;font-size:12px;background:rgba(0,0,0,0.6);padding:2px 6px;border-radius:4px;';
+            wrapper.appendChild(label);
+            container.appendChild(wrapper);
+        }
+        showOsd('多画面模式 (实验性)');
+    } else {
+        // 恢复单画面
+        container.innerHTML = '';
+        container.appendChild(dom.video);
+        container.appendChild(dom.channelNumberOsd);
+        // 重新添加其他 OSD...
+        showOsd('已退出多画面');
+    }
+}
+
+// ── 频道号显示（覆盖，增加历史记录触发）─────────────────
 
 function showChannelNumber(index) {
     if (!dom.channelNumberOsd) return;
@@ -626,6 +875,10 @@ function applyFiltersAndRender() {
     } else if (state.tabMode === 'fav') {
         const favSet = new Set(state.favorites);
         list = list.filter(ch => favSet.has(ch.name));
+    } else if (state.tabMode === 'history') {
+        // 按播放历史排序（最新观看在前），只显示有历史的频道
+        const histSet = new Set(state.playHistory);
+        list = state.playHistory.map(name => findChannelByName(name)).filter(ch => ch && list.includes(ch));
     }
 
     // 3. 搜索过滤
@@ -633,6 +886,9 @@ function applyFiltersAndRender() {
         const q = state.searchQuery.toLowerCase();
         list = list.filter(ch => ch.name.toLowerCase().includes(q) || (ch.group && ch.group.toLowerCase().includes(q)));
     }
+
+    // 4. 排序
+    list = sortChannelList(list);
 
     state.channels = list;
 
@@ -662,6 +918,9 @@ function playChannel(index, isSourceSwitch = false) {
         updateNowPlaying(ch);
         return;
     }
+
+    // 记录播放历史
+    addToHistory(ch.name);
 
     showOverlay('loading', '正在加载...', ch.name);
     updateNowPlaying(ch);
@@ -1110,6 +1369,119 @@ function toggleQualityPopup() {
     }
 }
 
+// ── 音轨切换 (hls.js) ──────────────────────────────────────
+
+function toggleAudioTrackPopup() {
+    if (!dom.sourcePopup || !state.hls) return;
+    const tracks = state.hls.audioTracks || [];
+    if (tracks.length <= 1) {
+        showOsd('当前只有一个音轨');
+        return;
+    }
+    if (dom.sourcePopup.classList.contains('hidden')) {
+        dom.sourcePopup.innerHTML = '';
+        for (let i = 0; i < tracks.length; i++) {
+            const t = tracks[i];
+            const item = document.createElement('div');
+            item.className = 'source-popup-item' + (i === state.hls.audioTrack ? ' active' : '');
+            item.innerHTML = (t.name || t.lang || '音轨 ' + (i + 1)) + (i === state.hls.audioTrack ? ' ✓' : '');
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                state.hls.audioTrack = i;
+                showOsd('音轨: ' + (t.name || t.lang || '#' + (i + 1)));
+                dom.sourcePopup.classList.add('hidden');
+            });
+            dom.sourcePopup.appendChild(item);
+        }
+        dom.sourcePopup.classList.remove('hidden');
+    } else {
+        dom.sourcePopup.classList.add('hidden');
+    }
+}
+
+// ── 字幕切换 (hls.js) ──────────────────────────────────────
+
+function toggleSubtitlePopup() {
+    if (!dom.qualityPopup || !state.hls) return;
+    const tracks = state.hls.subtitleTracks || [];
+    if (dom.qualityPopup.classList.contains('hidden')) {
+        dom.qualityPopup.innerHTML = '';
+        // 关闭字幕选项
+        const offItem = document.createElement('div');
+        offItem.className = 'source-popup-item' + (state.hls.subtitleDisplay === false ? ' active' : '');
+        offItem.innerHTML = '🚫 关闭字幕';
+        offItem.addEventListener('click', (e) => {
+            e.stopPropagation();
+            state.hls.subtitleTrack = -1;
+            showOsd('字幕已关闭');
+            dom.qualityPopup.classList.add('hidden');
+        });
+        dom.qualityPopup.appendChild(offItem);
+        for (let i = 0; i < tracks.length; i++) {
+            const t = tracks[i];
+            const item = document.createElement('div');
+            item.className = 'source-popup-item' + (i === state.hls.subtitleTrack ? ' active' : '');
+            item.innerHTML = (t.name || t.lang || '字幕 ' + (i + 1)) + (i === state.hls.subtitleTrack ? ' ✓' : '');
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                state.hls.subtitleTrack = i;
+                showOsd('字幕: ' + (t.name || t.lang || '#' + (i + 1)));
+                dom.qualityPopup.classList.add('hidden');
+            });
+            dom.qualityPopup.appendChild(item);
+        }
+        if (tracks.length === 0) {
+            dom.qualityPopup.innerHTML = '<div class="source-popup-item">无可用字幕</div>';
+        }
+        dom.qualityPopup.classList.remove('hidden');
+    } else {
+        dom.qualityPopup.classList.add('hidden');
+    }
+}
+
+// ── 多源测速（测试所有源的速度，返回最快源的索引）─────────
+
+function testSourceSpeed(url) {
+    return new Promise((resolve) => {
+        const start = performance.now();
+        const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        const timeout = setTimeout(() => {
+            if (controller) controller.abort();
+            resolve(Infinity);
+        }, 5000);
+        fetch(url, { method: 'HEAD', mode: 'no-cors', signal: controller ? controller.signal : undefined })
+            .then(() => {
+                clearTimeout(timeout);
+                resolve(performance.now() - start);
+            })
+            .catch(() => {
+                clearTimeout(timeout);
+                resolve(Infinity);
+            });
+    });
+}
+
+async function autoSelectFastestSource() {
+    const ch = state.channels[state.activeIndex];
+    if (!ch || !ch.sources || ch.sources.length <= 1) return;
+    showOsd('正在测速选择最快源...');
+    const speeds = [];
+    for (const src of ch.sources) {
+        const ms = await testSourceSpeed(proxyStreamUrl(src));
+        speeds.push(ms);
+    }
+    let fastestIdx = 0;
+    let fastestMs = speeds[0];
+    for (let i = 1; i < speeds.length; i++) {
+        if (speeds[i] < fastestMs) { fastestMs = speeds[i]; fastestIdx = i; }
+    }
+    if (fastestIdx !== (ch.active_source_index || 0)) {
+        switchToSource(fastestIdx);
+    } else {
+        showOsd('当前已是最快源');
+    }
+}
+
 /** 手动选择源（由控制栏源按钮触发） */
 function switchToSource(sourceIndex) {
     const ch = state.channels[state.activeIndex];
@@ -1543,6 +1915,12 @@ function setupNavigation() {
                 e.preventDefault();
                 switchTab(state.tabMode === 'fav' ? 'all' : 'fav');
                 break;
+            // 数字键 1-9：频道号快速跳转
+            case '1': case '2': case '3': case '4': case '5':
+            case '6': case '7': case '8': case '9':
+                e.preventDefault();
+                handleChannelNumberDigit(parseInt(e.key, 10));
+                break;
             case 'Escape':
                 if (state.infoPanelVisible) {
                     hideInfoPanel();
@@ -1563,6 +1941,40 @@ function setupNavigation() {
                 if (state.sidebarOpen) closeSidebar();
                 else openSidebar();
                 break;
+            // A 切换音轨 / S 切换字幕 / T 测速选最快源
+            case 'a':
+            case 'A':
+                e.preventDefault();
+                toggleAudioTrackPopup();
+                break;
+            case 's':
+            case 'S':
+                e.preventDefault();
+                toggleSubtitlePopup();
+                break;
+            case 't':
+            case 'T':
+                e.preventDefault();
+                autoSelectFastestSource();
+                break;
+            // 切换画面比例: R
+            case 'r':
+            case 'R':
+                e.preventDefault();
+                cycleAspectRatio();
+                break;
+            // 频道排序: G
+            case 'g':
+            case 'G':
+                e.preventDefault();
+                cycleSortMode();
+                break;
+            // 多画面模式: V
+            case 'v':
+            case 'V':
+                e.preventDefault();
+                toggleMultiview();
+                break;
         }
     });
 
@@ -1570,6 +1982,7 @@ function setupNavigation() {
     if (dom.tabAll) dom.tabAll.addEventListener('click', () => switchTab('all'));
     if (dom.tabHealthy) dom.tabHealthy.addEventListener('click', () => switchTab('healthy'));
     if (dom.tabFav) dom.tabFav.addEventListener('click', () => switchTab('fav'));
+    if (dom.tabHistory) dom.tabHistory.addEventListener('click', () => switchTab('history'));
 
     // Region switching
     if (dom.regionDomestic) dom.regionDomestic.addEventListener('click', () => switchRegion('domestic'));
@@ -1599,6 +2012,7 @@ async function switchTab(mode) {
     if (dom.tabAll) dom.tabAll.classList.toggle('active', mode === 'all');
     if (dom.tabHealthy) dom.tabHealthy.classList.toggle('active', mode === 'healthy');
     if (dom.tabFav) dom.tabFav.classList.toggle('active', mode === 'fav');
+    if (dom.tabHistory) dom.tabHistory.classList.toggle('active', mode === 'history');
 
     if (state.mode === 'api') {
         await fetchChannels();
@@ -1728,6 +2142,14 @@ function setupControls() {
     if (dom.btnQuality) dom.btnQuality.addEventListener('click', (e) => {
         e.stopPropagation();
         toggleQualityPopup();
+    });
+    if (dom.btnAspect) dom.btnAspect.addEventListener('click', (e) => {
+        e.stopPropagation();
+        cycleAspectRatio();
+    });
+    if (dom.btnSnapshot) dom.btnSnapshot.addEventListener('click', (e) => {
+        e.stopPropagation();
+        takeSnapshot();
     });
 
     // 音量滑块

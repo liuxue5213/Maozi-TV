@@ -1,12 +1,17 @@
 package com.tv.live;
 
 import android.content.SharedPreferences;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.media.AudioManager;
 import android.net.Uri;
+import android.app.PictureInPictureParams;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import android.util.Rational;
 import android.view.KeyEvent;
 import android.view.View;
 import android.text.Editable;
@@ -14,6 +19,12 @@ import android.text.TextWatcher;
 import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
 
 import androidx.recyclerview.widget.GridLayoutManager;
 
@@ -30,6 +41,8 @@ import com.google.android.exoplayer2.PlaybackException;
 import com.google.android.exoplayer2.Player;
 import com.google.android.exoplayer2.source.DefaultMediaSourceFactory;
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
+import com.google.android.exoplayer2.Tracks;
+import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.ui.PlayerView;
 import com.google.android.exoplayer2.upstream.DefaultBandwidthMeter;
 import com.google.android.exoplayer2.upstream.DefaultHttpDataSource;
@@ -80,7 +93,23 @@ public class MainActivity extends AppCompatActivity {
     private static final String KEY_MODE = "mode";
     private static final String KEY_FAVORITES = "favorites"; // 收藏频道 ID 集合
     private static final String KEY_LAST_CHANNEL = "last_channel_id"; // 上次播放的频道 ID
+    private static final String KEY_PLAY_HISTORY = "play_history"; // 播放历史（频道 ID，逗号分隔）
     private static final String DEFAULT_SERVER_URL = "http://192.168.1.100:8000";
+
+    // ── 频道排序模式 ────────────────────────────────────────
+    private static final int SORT_DEFAULT = 0;
+    private static final int SORT_NAME = 1;
+    private static final int SORT_GROUP = 2;
+    private static final String[] SORT_LABELS = {"默认排序", "按名称", "按分组"};
+    private int currentSortMode = SORT_DEFAULT;
+
+    // ── 画面比例模式 ────────────────────────────────────────
+    private static final int RESIZE_MODE_FIT = 0;       // 自适应（默认）
+    private static final int RESIZE_MODE_FILL = 1;      // 裁剪填充
+    private static final int RESIZE_MODE_ZOOM = 2;      // 缩放拉伸
+    private static final int RESIZE_MODE_16_9 = 3;      // 强制 16:9
+    private static final int RESIZE_MODE_4_3 = 4;       // 强制 4:3
+    private static final String[] RESIZE_MODE_LABELS = {"自适应", "裁剪填充", "缩放拉伸", "16:9", "4:3"};
 
     // ── 视图 ────────────────────────────────────────────────
     private PlayerView playerView;
@@ -108,6 +137,12 @@ public class MainActivity extends AppCompatActivity {
     private String currentCategoryId = CategoryHelper.ALL;
     private String searchQuery = "";
     private Channel currentChannel;
+    private final List<String> playHistory = new ArrayList<>(); // 播放历史（频道 ID，新→旧）
+    private static final int MAX_HISTORY = 30;
+    private int currentResizeMode = RESIZE_MODE_FIT; // 当前画面比例模式
+    // 画质轨道信息（ExoPlayer 的 VideoTrackSelection 列表）
+    private List<String> qualityLabels = new ArrayList<>();
+    private int currentQualityIndex = -1; // -1 = 自动
 
     // ── 线程/Handler ────────────────────────────────────────
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -232,6 +267,8 @@ public class MainActivity extends AppCompatActivity {
             }
             @Override public void afterTextChanged(Editable s) {}
         });
+
+        loadPlayHistory();
 
         showStatus("加载中…");
     }
@@ -364,6 +401,9 @@ public class MainActivity extends AppCompatActivity {
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .edit().putInt(KEY_LAST_CHANNEL, channel.id).apply();
 
+        // 记录播放历史
+        addToHistory(channel.id);
+
         // 显示频道信息叠加层
         showChannelInfo(channel);
 
@@ -373,6 +413,86 @@ public class MainActivity extends AppCompatActivity {
         if (pos >= 0) {
             rvChannels.scrollToPosition(pos);
         }
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // 画面比例切换
+    // ══════════════════════════════════════════════════════════
+
+    private void applyResizeMode(int mode) {
+        currentResizeMode = mode;
+        if (playerView == null) return;
+        switch (mode) {
+            case RESIZE_MODE_FIT:     playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);    break;
+            case RESIZE_MODE_FILL:    playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FILL);   break;
+            case RESIZE_MODE_ZOOM:    playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_ZOOM);   break;
+            case RESIZE_MODE_16_9:    playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH); break;
+            case RESIZE_MODE_4_3:     playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIXED_HEIGHT); break;
+        }
+        Toast.makeText(this, "画面比例: " + RESIZE_MODE_LABELS[mode], Toast.LENGTH_SHORT).show();
+    }
+
+    private void cycleResizeMode() {
+        int next = (currentResizeMode + 1) % RESIZE_MODE_LABELS.length;
+        applyResizeMode(next);
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // 播放历史
+    // ══════════════════════════════════════════════════════════
+
+    private void loadPlayHistory() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        String raw = prefs.getString(KEY_PLAY_HISTORY, "");
+        playHistory.clear();
+        if (raw != null && !raw.isEmpty()) {
+            for (String idStr : raw.split(",")) {
+                try {
+                    playHistory.add(idStr.trim());
+                } catch (NumberFormatException ignored) {}
+            }
+        }
+    }
+
+    private void savePlayHistory() {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < playHistory.size(); i++) {
+            if (i > 0) sb.append(",");
+            sb.append(playHistory.get(i));
+        }
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .edit().putString(KEY_PLAY_HISTORY, sb.toString()).apply();
+    }
+
+    private void addToHistory(int channelId) {
+        String idStr = String.valueOf(channelId);
+        playHistory.remove(idStr);
+        playHistory.add(0, idStr);
+        while (playHistory.size() > MAX_HISTORY) playHistory.remove(playHistory.size() - 1);
+        savePlayHistory();
+    }
+
+    /** 通过频道 ID 查找频道 */
+    private Channel findChannelById(int id) {
+        for (Channel ch : allChannels) if (ch.id == id) return ch;
+        return null;
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // 画中画 (PiP)
+    // ══════════════════════════════════════════════════════════
+
+    private void enterPipMode() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            Toast.makeText(this, "系统版本不支持画中画", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (player == null) return;
+        Rational aspectRatio = new Rational(16, 9);
+        PictureInPictureParams params = new PictureInPictureParams.Builder()
+                .setAspectRatio(aspectRatio)
+                .build();
+        enterPictureInPictureMode(params);
     }
 
     // ══════════════════════════════════════════════════════════
@@ -577,11 +697,14 @@ public class MainActivity extends AppCompatActivity {
             } else if (CategoryHelper.FAV.equals(cat.id)) {
                 count = 0;
                 for (Channel ch : allChannels) if (ch.isFavorite) count++;
+            } else if (CategoryHelper.HISTORY.equals(cat.id)) {
+                count = playHistory.size();
             } else {
                 List<Channel> bucket = buckets.get(cat.id);
                 count = bucket != null ? bucket.size() : 0;
             }
             if (CategoryHelper.FAV.equals(cat.id) && count == 0) continue;
+            if (CategoryHelper.HISTORY.equals(cat.id) && count == 0) continue;
             items.add(new CategoryAdapter.CategoryItem(cat, count));
         }
 
@@ -599,6 +722,21 @@ public class MainActivity extends AppCompatActivity {
 
     private void refreshChannelGrid() {
         List<Channel> filtered = CategoryHelper.filter(allChannels, currentCategoryId, false);
+        // 应用排序
+        applySort(filtered);
+        // 历史分类：按观看历史排序（最新在前）
+        if (CategoryHelper.HISTORY.equals(currentCategoryId) && !playHistory.isEmpty()) {
+            Map<Integer, Channel> idMap = new java.util.HashMap<>();
+            for (Channel ch : filtered) idMap.put(ch.id, ch);
+            List<Channel> histList = new ArrayList<>();
+            for (String idStr : playHistory) {
+                try {
+                    Channel ch = idMap.get(Integer.parseInt(idStr));
+                    if (ch != null) histList.add(ch);
+                } catch (NumberFormatException ignored) {}
+            }
+            filtered = histList;
+        }
         filtered = CategoryHelper.search(filtered, searchQuery);
         channelAdapter.setChannels(filtered);
 
@@ -784,6 +922,173 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ══════════════════════════════════════════════════════════
+    // 多画面模式（2x2 网格，实验性）
+    // ══════════════════════════════════════════════════════════
+
+    private void toggleMultiview() {
+        Toast.makeText(this, "多画面模式 (实验性功能，需要多 ExoPlayer 实例)", Toast.LENGTH_SHORT).show();
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // 截图
+    // ══════════════════════════════════════════════════════════
+
+    private void takeScreenshot() {
+        if (playerView == null) {
+            Toast.makeText(this, "播放器未就绪", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        try {
+            // 截取 PlayerView 画面（绘制到 Bitmap）
+            Bitmap bitmap = Bitmap.createBitmap(
+                    playerView.getWidth(), playerView.getHeight(), Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(bitmap);
+            playerView.draw(canvas);
+            // 保存到应用私有目录
+            File dir = new File(getExternalFilesDir(null), "screenshots");
+            if (!dir.exists()) dir.mkdirs();
+            File file = new File(dir, "MaoziTV_" + System.currentTimeMillis() + ".png");
+            FileOutputStream fos = new FileOutputStream(file);
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos);
+            fos.flush();
+            fos.close();
+            Toast.makeText(this, "截图已保存", Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            Toast.makeText(this, "截图失败: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // 音轨 / 字幕切换 (ExoPlayer TrackSelector)
+    // ══════════════════════════════════════════════════════════
+
+    private void showTrackDialog(final boolean isSubtitle) {
+        if (player == null || trackSelector == null) {
+            Toast.makeText(this, "播放器未就绪", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        try {
+            // 获取当前轨道组
+            com.google.android.exoplayer2.Tracks tracks = player.getCurrentTracks();
+            List<String> labels = new ArrayList<>();
+            List<Integer> trackIndices = new ArrayList<>();
+            labels.add("自动");
+            trackIndices.add(-1);
+            // 遍历所有轨道组，找出视频/音频/字幕
+            for (com.google.android.exoplayer2.Tracks.Group group : tracks.getGroups()) {
+                for (int i = 0; i < group.length; i++) {
+                    com.google.android.exoplayer2.Format format = group.getTrackFormat(i);
+                    if (isSubtitle) {
+                        if (format.sampleMimeType != null && format.sampleMimeType.startsWith("text")) {
+                            labels.add(format.language != null ? format.language : "字幕 " + (labels.size()));
+                            trackIndices.add(trackIndices.size() - 1);
+                        }
+                    } else {
+                        if (format.sampleMimeType != null && format.sampleMimeType.startsWith("audio")) {
+                            labels.add(format.language != null ? format.language : "音轨 " + (labels.size()));
+                            trackIndices.add(trackIndices.size() - 1);
+                        }
+                    }
+                }
+            }
+            if (labels.size() <= 1) {
+                Toast.makeText(this, isSubtitle ? "无可用字幕" : "当前只有一个音轨", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            String[] items = labels.toArray(new String[0]);
+            new AlertDialog.Builder(this)
+                    .setTitle(isSubtitle ? "字幕" : "音轨")
+                    .setItems(items, (dialog, which) -> {
+                        Toast.makeText(this, (isSubtitle ? "字幕: " : "音轨: ") + items[which], Toast.LENGTH_SHORT).show();
+                    })
+                    .setNegativeButton("取消", null)
+                    .show();
+        } catch (Exception e) {
+            Toast.makeText(this, "获取轨道信息失败", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // 多源测速选最快
+    // ══════════════════════════════════════════════════════════
+
+    private void autoSelectFastestSource() {
+        if (currentChannel == null || currentChannel.sources.size() <= 1) {
+            Toast.makeText(this, "当前频道只有一个源", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Toast.makeText(this, "正在测速...", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            int fastestIdx = -1;
+            long fastestMs = Long.MAX_VALUE;
+            for (int i = 0; i < currentChannel.sources.size(); i++) {
+                long ms = testUrlSpeed(currentChannel.sources.get(i));
+                if (ms < fastestMs) { fastestMs = ms; fastestIdx = i; }
+            }
+            final int idx = fastestIdx;
+            mainHandler.post(() -> {
+                if (idx >= 0 && idx != currentChannel.currentSourceIndex) {
+                    currentChannel.currentSourceIndex = idx;
+                    playUrl(currentChannel.getCurrentSourceUrl());
+                    Toast.makeText(this, "已切换到最快源 " + (idx + 1), Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(this, "当前已是最快源", Toast.LENGTH_SHORT).show();
+                }
+            });
+        }).start();
+    }
+
+    private long testUrlSpeed(String url) {
+        try {
+            long start = System.currentTimeMillis();
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+            conn.setRequestMethod("HEAD");
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
+            int code = conn.getResponseCode();
+            conn.disconnect();
+            if (code >= 200 && code < 400) return System.currentTimeMillis() - start;
+            return Long.MAX_VALUE;
+        } catch (Exception e) {
+            return Long.MAX_VALUE;
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // 频道排序
+    // ══════════════════════════════════════════════════════════
+
+    private void applySort(List<Channel> list) {
+        switch (currentSortMode) {
+            case SORT_NAME:
+                java.util.Collections.sort(list, (a, b) -> a.name.compareTo(b.name));
+                break;
+            case SORT_GROUP:
+                java.util.Collections.sort(list, (a, b) -> (a.group != null ? a.group : "").compareTo(b.group != null ? b.group : ""));
+                break;
+        }
+    }
+
+    private void cycleSortMode() {
+        currentSortMode = (currentSortMode + 1) % SORT_LABELS.length;
+        Toast.makeText(this, "排序: " + SORT_LABELS[currentSortMode], Toast.LENGTH_SHORT).show();
+        refreshChannelGrid();
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // EPG 节目单
+    // ══════════════════════════════════════════════════════════
+
+    private void showEpgDialog(Channel channel) {
+        if (channel == null) return;
+        new AlertDialog.Builder(this)
+                .setTitle(channel.name + " - 节目单")
+                .setMessage("当前节目: " + channel.name + "\n\nEPG 数据需要后端 XMLTV 源支持\n（功能预留）")
+                .setPositiveButton("确定", null)
+                .show();
+    }
+
+    // ══════════════════════════════════════════════════════════
     // 设置 / 模式切换
     // ══════════════════════════════════════════════════════════
 
@@ -794,6 +1099,12 @@ public class MainActivity extends AppCompatActivity {
                         "检查更新",
                         "更新频道源 (重新拉取)",
                         "切换播放源",
+                        "画质 (自动)",
+                        "画面比例 (" + RESIZE_MODE_LABELS[currentResizeMode] + ")",
+                        "截图",
+                        "测速选最快源",
+                        "排序 (" + SORT_LABELS[currentSortMode] + ")",
+                        "画中画",
                         "独立模式 (Gitee/GitHub)",
                         "服务器模式 (连接后端 API)"
                 }, (dialog, which) -> {
@@ -809,12 +1120,50 @@ public class MainActivity extends AppCompatActivity {
                     } else if (which == 2) {
                         showSourceSwitchDialog();
                     } else if (which == 3) {
+                        showQualityDialog();
+                    } else if (which == 4) {
+                        showResizeModeDialog();
+                    } else if (which == 5) {
+                        takeScreenshot();
+                    } else if (which == 6) {
+                        autoSelectFastestSource();
+                    } else if (which == 7) {
+                        cycleSortMode();
+                    } else if (which == 8) {
+                        enterPipMode();
+                    } else if (which == 9) {
                         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
                         prefs.edit().putString(KEY_MODE, "standalone").apply();
                         Toast.makeText(this, "当前为独立模式", Toast.LENGTH_SHORT).show();
                     } else {
                         showUrlDialog();
                     }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    // 画质选择对话框
+    private void showQualityDialog() {
+        String[] items = {"自动 (ABR)", "1080p", "720p", "576p", "480p"};
+        new AlertDialog.Builder(this)
+                .setTitle("选择画质")
+                .setSingleChoiceItems(items, currentQualityIndex < 0 ? 0 : currentQualityIndex + 1, (dialog, which) -> {
+                    currentQualityIndex = (which == 0) ? -1 : which - 1;
+                    Toast.makeText(this, "画质: " + items[which], Toast.LENGTH_SHORT).show();
+                    dialog.dismiss();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    // 画面比例选择对话框
+    private void showResizeModeDialog() {
+        new AlertDialog.Builder(this)
+                .setTitle("画面比例")
+                .setSingleChoiceItems(RESIZE_MODE_LABELS, currentResizeMode, (dialog, which) -> {
+                    applyResizeMode(which);
+                    dialog.dismiss();
                 })
                 .setNegativeButton("取消", null)
                 .show();

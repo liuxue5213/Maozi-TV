@@ -13,6 +13,7 @@ public final class CategoryHelper {
 
     public static final String ALL = "all";
     public static final String FAV = "fav";
+    public static final String HISTORY = "history";
 
     public static class Category {
         public final String id;
@@ -44,6 +45,7 @@ public final class CategoryHelper {
         List<Category> list = new ArrayList<>();
         list.add(new Category(ALL, "全部", "📋"));
         list.add(new Category(FAV, "收藏", "⭐"));
+        list.add(new Category(HISTORY, "历史", "🕘"));
         for (Category c : SMART_CATEGORIES) {
             list.add(c);
         }
@@ -97,6 +99,8 @@ public final class CategoryHelper {
             return result;
         }
         if (ALL.equals(categoryId)) return new ArrayList<>(all);
+        // 历史分类：由 MainActivity 在 refreshChannelGrid 中根据 playHistory 重排序
+        if (HISTORY.equals(categoryId)) return new ArrayList<>(all);
 
         Map<String, List<Channel>> buckets = buildSmartBuckets(all);
         List<Channel> bucket = buckets.get(categoryId);
