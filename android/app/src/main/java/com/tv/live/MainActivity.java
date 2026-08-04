@@ -1282,26 +1282,6 @@ public class MainActivity extends AppCompatActivity {
                         prefs.edit().putString(KEY_MODE, "standalone").apply();
                         Toast.makeText(this, "当前为独立模式", Toast.LENGTH_SHORT).show();
                     } else {
-                        showSourceSwitchDialog();
-                    } else if (which == 3) {
-                        showQualityDialog();
-                    } else if (which == 4) {
-                        showResizeModeDialog();
-                    } else if (which == 5) {
-                        takeScreenshot();
-                    } else if (which == 6) {
-                        autoSelectFastestSource();
-                    } else if (which == 7) {
-                        cycleSortMode();
-                    } else if (which == 8) {
-                        showThemeDialog();
-                    } else if (which == 9) {
-                        enterPipMode();
-                    } else if (which == 10) {
-                        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-                        prefs.edit().putString(KEY_MODE, "standalone").apply();
-                        Toast.makeText(this, "当前为独立模式", Toast.LENGTH_SHORT).show();
-                    } else {
                         showUrlDialog();
                     }
                 })
