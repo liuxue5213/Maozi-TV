@@ -1900,7 +1900,13 @@ function renderChannelItem(ch, i, isFav) {
         }, 600);
     });
     item.addEventListener('mouseup', () => clearTimeout(state.longPressTimer));
-    item.addEventListener('mouseleave', () => clearTimeout(state.longPressTimer));
+    item.addEventListener('mouseleave', () => {
+        clearTimeout(state.longPressTimer);
+        stopPreview();
+    });
+
+    // 鼠标悬停预览（500ms 后弹出小窗）
+    item.addEventListener('mouseenter', () => startPreview(ch));
 
     // 触摸长按
     item.addEventListener('touchstart', (e) => {

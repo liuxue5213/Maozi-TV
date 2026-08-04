@@ -20,20 +20,30 @@ import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
-
-import androidx.recyclerview.widget.GridLayoutManager;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.DefaultLoadControl;
 import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.MediaItem;
@@ -50,19 +60,6 @@ import com.google.android.exoplayer2.upstream.DefaultHttpDataSource;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
-
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /**
  * Maozi TV — 双模式 Android TV 播放器（原生 ExoPlayer 版）
@@ -95,7 +92,18 @@ public class MainActivity extends AppCompatActivity {
     private static final String KEY_FAVORITES = "favorites"; // 收藏频道 ID 集合
     private static final String KEY_LAST_CHANNEL = "last_channel_id"; // 上次播放的频道 ID
     private static final String KEY_PLAY_HISTORY = "play_history"; // 播放历史（频道 ID，逗号分隔）
+    private static final String KEY_THEME = "theme"; // 主题（dark/blue/green）
     private static final String DEFAULT_SERVER_URL = "http://192.168.1.100:8000";
+
+    // ── 主题配色 ────────────────────────────────────────────
+    // 主题索引：0=暗夜 1=深蓝 2=墨绿
+    private static final int[][] THEME_COLORS = {
+            {0xFF0A0A0F, 0xFF1A1A2E, 0xFF4A9EFF}, // 暗夜：背景/卡片/强调
+            {0xFF0A1628, 0xFF1E293B, 0xFF3B82F6}, // 深蓝
+            {0xFF0A1F0A, 0xFF1A2E1A, 0xFF22C55E}, // 墨绿
+    };
+    private static final String[] THEME_NAMES = {"暗夜", "深蓝", "墨绿"};
+    private int currentTheme = 0;
 
     // ── 频道排序模式 ────────────────────────────────────────
     private static final int SORT_DEFAULT = 0;
@@ -203,6 +211,9 @@ public class MainActivity extends AppCompatActivity {
         initPlayer();
         initRecyclerViews();
         setupKeyListener();
+
+        // 加载已保存的主题
+        loadTheme();
 
         // 沉浸式全屏
         hideSystemUI();
@@ -520,16 +531,33 @@ public class MainActivity extends AppCompatActivity {
     // ══════════════════════════════════════════════════════════
 
     private void showThemeDialog() {
-        final String[] themes = {"暗夜 (默认)", "深蓝", "墨绿"};
         new AlertDialog.Builder(this)
                 .setTitle("选择主题")
-                .setSingleChoiceItems(themes, 0, (dialog, which) -> {
-                    // 主题切换需要重启 Activity 应用新配色
-                    Toast.makeText(this, "主题: " + themes[which] + " (重启后生效)", Toast.LENGTH_SHORT).show();
+                .setSingleChoiceItems(THEME_NAMES, currentTheme, (dialog, which) -> {
+                    applyTheme(which);
+                    Toast.makeText(this, "主题: " + THEME_NAMES[which], Toast.LENGTH_SHORT).show();
                     dialog.dismiss();
                 })
                 .setNegativeButton("取消", null)
                 .show();
+    }
+
+    /** 应用主题：持久化 + 立即修改背景/面板颜色 */
+    private void applyTheme(int themeIndex) {
+        currentTheme = themeIndex;
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putInt(KEY_THEME, themeIndex).apply();
+        int[] colors = THEME_COLORS[themeIndex];
+        // 应用到播放器区域背景
+        View root = findViewById(android.R.id.content);
+        root.setBackgroundColor(colors[0]);
+        // 应用到选台面板
+        if (channelPanel != null) channelPanel.setBackgroundColor((colors[0] << 8) | 0xE6000000);
+    }
+
+    /** 从 SharedPreferences 加载已保存的主题 */
+    private void loadTheme() {
+        currentTheme = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getInt(KEY_THEME, 0);
+        applyTheme(currentTheme);
     }
 
     // ══════════════════════════════════════════════════════════
@@ -1196,11 +1224,8 @@ public class MainActivity extends AppCompatActivity {
 
     private void showEpgDialog(Channel channel) {
         if (channel == null) return;
-        new AlertDialog.Builder(this)
-                .setTitle(channel.name + " - 节目单")
-                .setMessage("当前节目: " + channel.name + "\n\nEPG 数据需要后端 XMLTV 源支持\n（功能预留）")
-                .setPositiveButton("确定", null)
-                .show();
+        // EPG 暂未接入后端数据源，直接 Toast 提示而非弹空壳对话框
+        Toast.makeText(this, channel.name + "：EPG 节目单暂未接入", Toast.LENGTH_SHORT).show();
     }
 
     // ══════════════════════════════════════════════════════════
@@ -1263,16 +1288,71 @@ public class MainActivity extends AppCompatActivity {
 
     // 画质选择对话框
     private void showQualityDialog() {
-        String[] items = {"自动 (ABR)", "1080p", "720p", "576p", "480p"};
+        if (player == null || trackSelector == null) {
+            Toast.makeText(this, "播放器未就绪", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        // 从 ExoPlayer 获取实际可用视频轨道
+        Tracks tracks = player.getCurrentTracks();
+        List<Tracks.Group> videoGroups = new ArrayList<>();
+        for (Tracks.Group group : tracks.getGroups()) {
+            if (group.getType() == C.TRACK_TYPE_VIDEO) {
+                videoGroups.add(group);
+            }
+        }
+
+        // 构建画质选项
+        List<String> labels = new ArrayList<>();
+        labels.add("自动 (ABR)");
+        final List<Integer> heights = new ArrayList<>();
+        heights.add(-1); // 自动
+
+        // 收集所有视频轨道的分辨率
+        for (Tracks.Group group : videoGroups) {
+            for (int i = 0; i < group.length; i++) {
+                Format fmt = group.getTrackFormat(i);
+                if (fmt.height > 0) {
+                    String label = fmt.height >= 2160 ? "4K" : fmt.height + "p";
+                    if (fmt.bitrate > 0) label += " (" + (fmt.bitrate / 1000000) + "Mbps)";
+                    labels.add(label);
+                    heights.add(fmt.height);
+                }
+            }
+        }
+
+        if (labels.size() <= 1) {
+            // 直播源通常单码率，没有多画质可选
+            Toast.makeText(this, "当前频道只有一个画质", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        final String[] items = labels.toArray(new String[0]);
         new AlertDialog.Builder(this)
                 .setTitle("选择画质")
-                .setSingleChoiceItems(items, currentQualityIndex < 0 ? 0 : currentQualityIndex + 1, (dialog, which) -> {
-                    currentQualityIndex = (which == 0) ? -1 : which - 1;
+                .setSingleChoiceItems(items, 0, (dialog, which) -> {
+                    applyQualityPreference(heights.get(which));
                     Toast.makeText(this, "画质: " + items[which], Toast.LENGTH_SHORT).show();
                     dialog.dismiss();
                 })
                 .setNegativeButton("取消", null)
                 .show();
+    }
+
+    /**
+     * 应用画质偏好到 TrackSelector。
+     * @param maxHeight -1=自动(ABR)；>0=限制最高分辨率
+     */
+    private void applyQualityPreference(int maxHeight) {
+        if (trackSelector == null) return;
+        DefaultTrackSelector.Parameters.Builder params = trackSelector.buildUponParameters();
+        if (maxHeight < 0) {
+            // 自动：清除限制
+            params.clearVideoSizeConstraints();
+        } else {
+            // 限制最大分辨率（ExoPlayer 会选不超过此高度的最高画质）
+            params.setMaxVideoSize(Integer.MAX_VALUE, maxHeight);
+        }
+        trackSelector.setParameters(params);
     }
 
     // 画面比例选择对话框
