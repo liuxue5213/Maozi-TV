@@ -113,7 +113,7 @@ public class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.ViewHold
 
     @Override
     public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
-        Channel ch = channels.get(position);
+        ChannelOptimized ch = channels.get(position);
         boolean playing = ch.id == selectedChannelId;
 
         // 搜索高亮

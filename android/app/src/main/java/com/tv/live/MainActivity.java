@@ -522,7 +522,7 @@ public class MainActivity extends AppCompatActivity {
 
     /** 通过频道 ID 查找频道 */
     private ChannelOptimized findChannelById(int id) {
-        for (Channel ch : allChannels) if (ch.id == id) return ch;
+        for (ChannelOptimized ch : allChannels) if (ch.id == id) return ch;
         return null;
     }
 
@@ -814,9 +814,9 @@ public class MainActivity extends AppCompatActivity {
         if (!allChannels.isEmpty()) {
             SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
             int lastId = prefs.getInt(KEY_LAST_CHANNEL, -1);
-            Channel last = null;
+            ChannelOptimized last = null;
             if (lastId >= 0) {
-                for (Channel ch : allChannels) {
+                for (ChannelOptimized ch : allChannels) {
                     if (ch.id == lastId) { last = ch; break; }
                 }
             }
@@ -830,7 +830,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void refreshCategoryNav() {
         List<CategoryAdapter.CategoryItem> items = new ArrayList<>();
-        Map<String, List<Channel>> buckets = CategoryHelper.buildSmartBuckets(allChannels);
+        Map<String, List<ChannelOptimized>> buckets = CategoryHelper.buildSmartBuckets(allChannels);
 
         for (CategoryHelper.Category cat : CategoryHelper.getNavCategories()) {
             int count;
@@ -838,11 +838,11 @@ public class MainActivity extends AppCompatActivity {
                 count = allChannels.size();
             } else if (CategoryHelper.FAV.equals(cat.id)) {
                 count = 0;
-                for (Channel ch : allChannels) if (ch.isFavorite) count++;
+                for (ChannelOptimized ch : allChannels) if (ch.isFavorite) count++;
             } else if (CategoryHelper.HISTORY.equals(cat.id)) {
                 count = playHistory.size();
             } else {
-                List<Channel> bucket = buckets.get(cat.id);
+                List<ChannelOptimized> bucket = buckets.get(cat.id);
                 count = bucket != null ? bucket.size() : 0;
             }
             if (CategoryHelper.FAV.equals(cat.id) && count == 0) continue;
@@ -910,7 +910,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void saveFavorites() {
         StringBuilder sb = new StringBuilder();
-        for (Channel ch : allChannels) {
+        for (ChannelOptimized ch : allChannels) {
             if (ch.isFavorite) {
                 if (sb.length() > 0) sb.append(",");
                 sb.append(ch.id);
@@ -1428,7 +1428,7 @@ public class MainActivity extends AppCompatActivity {
             Toast.makeText(this, "频道号超出范围 (1-" + allChannels.size() + ")", Toast.LENGTH_SHORT).show();
             return;
         }
-        Channel target = allChannels.get(channelNumber - 1);
+        ChannelOptimized target = allChannels.get(channelNumber - 1);
         currentCategoryId = CategoryHelper.ALL;
         playChannel(target);
         Log.i(TAG, "跳转到频道 " + channelNumber + ": " + target.name);
