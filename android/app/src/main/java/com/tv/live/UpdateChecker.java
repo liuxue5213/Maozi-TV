@@ -91,19 +91,19 @@ public class UpdateChecker {
     public void checkForUpdate(boolean silent) {
         new Thread(() -> {
             JSONObject json = null;
-            Exception lastErr = null;
+            final Exception[] lastErr = new Exception[1];
             for (String url : VERSION_JSON_URLS) {
                 try {
                     json = fetchJson(url);
                     if (json != null) break;
                 } catch (Exception e) {
-                    lastErr = e;
+                    lastErr[0] = e;
                     Log.w(TAG, "拉取 version.json 失败: " + url + " — " + e.getMessage());
                 }
             }
 
             final JSONObject result = json;
-            mainHandler.post(() -> handleResult(result, silent, lastErr));
+            mainHandler.post(() -> handleResult(result, silent, lastErr[0]));
         }).start();
     }
 
