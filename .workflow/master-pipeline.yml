@@ -1,0 +1,62 @@
+version: '1.0'
+name: master-pipeline
+displayName: 构建 MaoziTV APK
+
+# Gitee Go 流水线 — 在 Gitee 上独立构建 Android APK
+# 使用前请先在 Gitee 仓库 →「服务 → Gitee Go」开通流水线
+
+stages:
+- stage:
+  name: build
+  displayName: 编译 Release APK
+  steps:
+  # Android 项目本质是 Gradle/Java 项目，用 Java 构建插件
+  - step: build@java
+    name: build_apk
+    displayName: Gradle 编译 APK
+    jdkVersion: '17'
+    # 自定义构建命令：安装 Android SDK 组件 + Gradle 编译 Release
+    commands:
+    - set -e
+    - export ANDROID_HOME=/opt/android-sdk
+    - export ANDROID_SDK_ROOT=$ANDROID_HOME
+    - export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools
+    # 安装 Android SDK 组件（若环境已有则跳过）
+    - sdkmanager --version 2>/dev/null || true
+    - yes | sdkmanager "platforms;android-34" "build-tools;34.0.0" 2>/dev/null || true
+    - cd android
+    - chmod +x ./gradlew
+    - ./gradlew assembleRelease --no-daemon --stacktrace
+    - mkdir -p ../output
+    - cp app/build/outputs/apk/release/app-release.apk ../output/MaoziTV.apk
+    - cd ..
+    # 构建产物暂存
+    artifacts:
+    - name: BUILD_ARTIFACT
+      path:
+      - ./output
+
+  - step: publish@general_artifacts
+    name: publish_artifacts
+    displayName: 上传 APK
+    dependArtifact: BUILD_ARTIFACT
+    artifactName: MaoziTV-APK
+    dependsOn: build_apk
+
+- stage:
+  name: release
+  displayName: 发布
+  steps:
+  - step: publish@release_artifacts
+    name: publish_release
+    displayName: 发布到 Release
+    dependArtifact: MaoziTV-APK
+    version: '2.2.0'
+    autoIncrement: false
+
+# 触发条件：推送 main 分支时自动构建
+triggers:
+  push:
+    branches:
+      include:
+      - main
