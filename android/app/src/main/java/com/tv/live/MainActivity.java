@@ -173,7 +173,8 @@ public class MainActivity extends AppCompatActivity {
     // ── 选台面板显隐 ─────────────────────────────────────────
     private boolean panelVisible = false;
     private final Handler panelAutoHideHandler = new Handler(Looper.getMainLooper());
-    private static final long PANEL_AUTO_HIDE_DELAY = 12000;
+    private static final long PANEL_AUTO_HIDE_DELAY = 30000; // 延长到30秒
+    private long lastUserInteractionTime = 0; // 最后一次用户操作时间
 
     // ── 频道信息叠加层自动隐藏 ──────────────────────────────
     private final Handler infoOverlayHandler = new Handler(Looper.getMainLooper());
@@ -353,8 +354,9 @@ public class MainActivity extends AppCompatActivity {
         DefaultMediaSourceFactory mediaSourceFactory = new DefaultMediaSourceFactory(this)
                 .setDataSourceFactory(httpFactory);
 
+        // 优化缓冲策略以减少内存使用：更小的最大缓冲和初始缓冲
         DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
-                .setBufferDurationsMs(15000, 50000, 1500, 2000)
+                .setBufferDurationsMs(10000, 30000, 1500, 2000)  // 减小最大缓冲从50s到30s
                 .build();
 
         player = new ExoPlayer.Builder(this)
@@ -373,8 +375,16 @@ public class MainActivity extends AppCompatActivity {
                 if (state == Player.STATE_READY) {
                     hideStatus();
                     retryCount = 0; // 播放成功，重置重试
+                    // 播放成功后延迟隐藏频道信息叠加层
+                    if (currentChannel != null) {
+                        hideChannelInfoOverlay();
+                    }
                 } else if (state == Player.STATE_BUFFERING) {
                     showStatus("缓冲中…");
+                    // 缓冲期间持续显示频道信息（不自动隐藏）
+                    if (currentChannel != null) {
+                        showChannelInfo(currentChannel, false);
+                    }
                 }
             }
 
@@ -452,8 +462,8 @@ public class MainActivity extends AppCompatActivity {
         // 记录播放历史
         addToHistory(channel.id);
 
-        // 显示频道信息叠加层
-        showChannelInfo(channel);
+        // 立即显示频道信息叠加层（不自动隐藏，由播放状态控制）
+        showChannelInfo(channel, false);
 
         // 更新选中状态
         channelAdapter.setSelectedChannelId(channel.id);
@@ -582,6 +592,10 @@ public class MainActivity extends AppCompatActivity {
     // ══════════════════════════════════════════════════════════
 
     private void showChannelInfo(ChannelOptimized channel) {
+        showChannelInfo(channel, true);
+    }
+
+    private void showChannelInfo(ChannelOptimized channel, boolean autoHide) {
         tvChannelName.setText(channel.name);
         tvChannelGroup.setText(channel.group);
         // 频道号小字
@@ -593,6 +607,14 @@ public class MainActivity extends AppCompatActivity {
         if (tvEpgNow != null) tvEpgNow.setVisibility(View.GONE);
         channelInfoOverlay.setVisibility(View.VISIBLE);
 
+        infoOverlayHandler.removeCallbacksAndMessages(null);
+        if (autoHide) {
+            infoOverlayHandler.postDelayed(() ->
+                    channelInfoOverlay.setVisibility(View.GONE), INFO_OVERLAY_DURATION);
+        }
+    }
+
+    private void hideChannelInfoOverlay() {
         infoOverlayHandler.removeCallbacksAndMessages(null);
         infoOverlayHandler.postDelayed(() ->
                 channelInfoOverlay.setVisibility(View.GONE), INFO_OVERLAY_DURATION);
@@ -678,6 +700,7 @@ public class MainActivity extends AppCompatActivity {
             Log.d(TAG, "Category clicked: " + item.category.id + " (" + item.category.name + ")");
             currentCategoryId = item.category.id;
             refreshChannelGrid();
+            recordUserInteraction();
         });
         rvCategories.setLayoutManager(new LinearLayoutManager(this));
         rvCategories.setAdapter(categoryAdapter);
@@ -694,6 +717,7 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public boolean onChannelLongClick(ChannelOptimized channel, int position) {
                 toggleFavorite(channel);
+                recordUserInteraction();
                 return true;
             }
         });
@@ -715,20 +739,45 @@ public class MainActivity extends AppCompatActivity {
 
     private void showChannelPanel() {
         panelVisible = true;
+        lastUserInteractionTime = System.currentTimeMillis();
         channelPanel.setVisibility(View.VISIBLE);
         // 滑入动画
         android.view.animation.Animation slideIn = android.view.animation.AnimationUtils.loadAnimation(this, R.anim.slide_in_right);
         channelPanel.startAnimation(slideIn);
         refreshCategoryNav();
         refreshChannelGrid();
-        panelAutoHideHandler.removeCallbacksAndMessages(null);
-        panelAutoHideHandler.postDelayed(this::hideChannelPanel, PANEL_AUTO_HIDE_DELAY);
+        resetPanelAutoHide();
 
         if (currentChannel != null) {
             int pos = channelAdapter.findPositionByChannelId(currentChannel.id);
             if (pos >= 0) rvChannels.scrollToPosition(pos);
         }
         rvChannels.requestFocus();
+    }
+
+    private void resetPanelAutoHide() {
+        panelAutoHideHandler.removeCallbacksAndMessages(null);
+        panelAutoHideHandler.postDelayed(this::checkAndHidePanel, 5000); // 每5秒检查一次
+    }
+
+    private void checkAndHidePanel() {
+        if (!panelVisible) return;
+
+        long inactiveTime = System.currentTimeMillis() - lastUserInteractionTime;
+        if (inactiveTime >= PANEL_AUTO_HIDE_DELAY) {
+            hideChannelPanel();
+        } else {
+            // 继续等待
+            long remainingTime = PANEL_AUTO_HIDE_DELAY - inactiveTime;
+            panelAutoHideHandler.postDelayed(this::checkAndHidePanel, Math.min(5000, remainingTime));
+        }
+    }
+
+    private void recordUserInteraction() {
+        lastUserInteractionTime = System.currentTimeMillis();
+        if (panelVisible) {
+            resetPanelAutoHide();
+        }
     }
 
     private void hideChannelPanel() {
@@ -884,6 +933,11 @@ public class MainActivity extends AppCompatActivity {
         Log.d(TAG, "refreshChannelGrid: currentCategoryId=" + currentCategoryId + ", allChannels.size()=" + allChannels.size());
         List<ChannelOptimized> filtered = CategoryHelper.filter(allChannels, currentCategoryId, false);
         Log.d(TAG, "refreshChannelGrid: filtered.size()=" + filtered.size());
+
+        // 内存优化：在列表很大时主动建议垃圾回收
+        if (filtered.size() > 500) {
+            System.gc();
+        }
         // 应用排序
         applySort(filtered);
         // 历史分类：按观看历史排序（最新在前）
@@ -1467,6 +1521,9 @@ public class MainActivity extends AppCompatActivity {
         // 选台面板打开时：交给 RecyclerView 自身的焦点导航（上下/左右移动），
         // 只拦截 OK/BACK/数字键，其余方向键透传给系统做焦点移动。
         if (panelVisible) {
+            // 记录用户操作，防止面板自动隐藏
+            recordUserInteraction();
+            
             switch (keyCode) {
                 case KeyEvent.KEYCODE_DPAD_CENTER:
                 case KeyEvent.KEYCODE_ENTER:
