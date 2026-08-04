@@ -1,25 +1,28 @@
 version: "1.0"
 name: 构建
-displayName: 构建
+displayName: 构建 APK
 stages:
 - name: 构建
-  displayName: 构建
+  displayName: 编译 Release APK
   strategy: naturally
   trigger: auto
   steps:
   - step: build@android
-    name: ""
+    name: "build_apk"
     displayName: Android 构建
-    jdkVersion: "21"
-    gradleVersion: "9.0"
-    buildToolsVersion: 35.0.1
-    ndkVersion: 28.2.13676358
+    # 项目使用 JDK 17 + Gradle 8.5 + build-tools 34
+    jdkVersion: "17"
+    gradleVersion: "8.5"
+    buildToolsVersion: "34.0.0"
     commands:
-    - gradle assembleRelease
+    - cd android
+    - chmod +x ./gradlew
+    - ./gradlew assembleRelease --no-daemon --stacktrace
+    - cd ..
     artifacts:
     - name: BUILD_ARTIFACT
       path:
-      - ./app/build/outputs/apk/release
+      - ./android/app/build/outputs/apk/release
       type: .tar.gz
     caches:
     - "~/.gradle/caches"
