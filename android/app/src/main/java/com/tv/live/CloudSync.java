@@ -125,7 +125,7 @@ public class CloudSync {
             } catch (Exception e) {
                 Log.d(TAG, "云同步保存失败: " + e.getMessage());
             }
-        }).start();
+        });
     }
 
     // ── 云同步：加载 ──────────────────────────────────────
@@ -168,7 +168,7 @@ public class CloudSync {
                 Log.d(TAG, "云同步加载失败: " + e.getMessage());
                 postEmpty(callback);
             }
-        }).start();
+        });
     }
 
     private static void postEmpty(final SyncLoadCallback callback) {

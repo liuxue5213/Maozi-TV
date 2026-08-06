@@ -1,5 +1,6 @@
 package com.tv.live;
 
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -94,10 +95,11 @@ public class MainActivity extends AppCompatActivity {
     private static final MediaCodecSelector SOFTWARE_ONLY_SELECTOR = new MediaCodecSelector() {
         @Override
         public java.util.List<MediaCodecInfo> getDecoderInfos(String mimeType,
-                                                              boolean requiresSecureDecoder)
+                                                              boolean requiresSecureDecoder,
+                                                              boolean requiresTunnelingDecoder)
                 throws MediaCodecUtil.DecoderQueryException {
             java.util.List<MediaCodecInfo> all = MediaCodecSelector.DEFAULT
-                    .getDecoderInfos(mimeType, requiresSecureDecoder);
+                    .getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder);
             java.util.List<MediaCodecInfo> software = new ArrayList<>();
             for (MediaCodecInfo info : all) {
                 if (info.name != null && info.name.startsWith("OMX.google.")) {
