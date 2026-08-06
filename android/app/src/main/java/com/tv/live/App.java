@@ -28,6 +28,11 @@ public class App extends Application {
     public void onCreate() {
         super.onCreate();
 
+        // 崩溃日志文件记录器（写入 /sdcard/Android/data/包名/files/crash.log）
+        try {
+            CrashLogHandler.init(this);
+        } catch (Exception ignored) {}
+
         initBugly();
 
         // 注册后台频道源周期检查（每 6 小时）

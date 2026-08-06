@@ -276,6 +276,9 @@ public class MainActivity extends AppCompatActivity {
 
         audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
 
+        // 检查上次闪退的崩溃日志，若有则弹窗展示（便于排查，无 adb 环境可用）
+        checkCrashLog();
+
         initViews();
         initPlayer();
         initRecyclerViews();
@@ -456,6 +459,10 @@ public class MainActivity extends AppCompatActivity {
         originalExceptionHandler = Thread.getDefaultUncaughtExceptionHandler();
         Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
             Log.e(TAG, "未捕获异常 [" + thread.getName() + "]: " + throwable.getMessage(), throwable);
+            // 写入崩溃日志文件（便于无 adb 环境排查）
+            try {
+                CrashLogHandler.writeCrashLog(thread, throwable);
+            } catch (Exception ignored) {}
 
             if (thread.getName().equals("main")) {
                 // 主线程异常：尝试恢复，避免直接闪退
@@ -479,6 +486,41 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
         });
+    }
+
+    /**
+     * 检查崩溃日志文件。若上次运行有闪退，弹窗展示堆栈（仅显示最近一次异常的开头部分）。
+     */
+    private void checkCrashLog() {
+        try {
+            String log = CrashLogHandler.readCrashLog();
+            if (log == null || log.trim().isEmpty()) return;
+
+            // 截取最近一次崩溃记录（最后一条 ==== 段）
+            int lastIdx = log.lastIndexOf("========================================");
+            String recent = lastIdx >= 0 ? log.substring(lastIdx) : log;
+            // 限制展示长度
+            if (recent.length() > 800) {
+                recent = recent.substring(0, 800) + "\n...(已截断)";
+            }
+
+            final String crashInfo = recent;
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                if (isFinishing()) return;
+                new AlertDialog.Builder(this)
+                        .setTitle("⚠️ 上次异常退出")
+                        .setMessage("App 上次异常退出了，以下是崩溃信息：\n\n" + crashInfo
+                                + "\n\n可反馈给开发者排查。")
+                        .setPositiveButton("知道了", (d, w) -> {
+                            CrashLogHandler.clearCrashLog();
+                            d.dismiss();
+                        })
+                        .setNegativeButton("保留日志", null)
+                        .show();
+            }, 1500); // 延迟到界面稳定后弹出
+        } catch (Exception e) {
+            Log.d(TAG, "检查崩溃日志失败: " + e.getMessage());
+        }
     }
 
     // ══════════════════════════════════════════════════════════
