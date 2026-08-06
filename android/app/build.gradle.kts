@@ -10,8 +10,8 @@ android {
         applicationId = "com.tv.live"
         minSdk = 21
         targetSdk = 34
-        versionCode = 4
-        versionName = "2.2.0"
+        versionCode = 5
+        versionName = "2.3.0"
     }
 
     signingConfigs {
@@ -66,4 +66,7 @@ dependencies {
 
     // 图片加载（频道 Logo）
     implementation("com.github.bumptech.glide:glide:4.16.0")
+
+    // WorkManager — 后台周期检查频道源更新
+    implementation("androidx.work:work-runtime:2.9.0")
 }

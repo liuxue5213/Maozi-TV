@@ -124,6 +124,32 @@ class SourceCheckLog(Base):
     checked_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class AppEvent(Base):
+    """Lightweight client telemetry event (startup, channel switch, favorite...)."""
+
+    __tablename__ = "app_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_type = Column(String(64), nullable=False, index=True)  # app_start / play_channel / fav / crash
+    channel_id = Column(Integer, nullable=True)                  # 相关频道 ID（可空）
+    channel_name = Column(String(128), default="")               # 冗余频道名，便于热力榜
+    client_id = Column(String(64), default="")                   # 匿名客户端标识（设备指纹）
+    extra = Column(String(512), default="")                      # 附加信息 JSON
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+
+class ChannelPlayStats(Base):
+    """Per-channel play count aggregation (for hot ranking)."""
+
+    __tablename__ = "channel_play_stats"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    channel_id = Column(Integer, nullable=False, unique=True, index=True)
+    channel_name = Column(String(128), default="")
+    play_count = Column(Integer, default=0)
+    last_played_at = Column(DateTime, nullable=True)
+
+
 def init_db():
     """Create all tables."""
     Base.metadata.create_all(bind=engine)

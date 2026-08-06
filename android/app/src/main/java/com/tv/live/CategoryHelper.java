@@ -91,6 +91,15 @@ public final class CategoryHelper {
     }
 
     public static List<ChannelOptimized> filter(List<ChannelOptimized> all, String categoryId, boolean favoritesOnly) {
+        return filter(all, categoryId, favoritesOnly, null);
+    }
+
+    /**
+     * 带缓存 buckets 的过滤方法，避免重复计算分类。
+     * @param cachedBuckets 预计算的分类桶，为 null 时回退到实时计算
+     */
+    public static List<ChannelOptimized> filter(List<ChannelOptimized> all, String categoryId, boolean favoritesOnly,
+                                                 Map<String, List<ChannelOptimized>> cachedBuckets) {
         List<ChannelOptimized> result = new ArrayList<>();
         if (FAV.equals(categoryId) || favoritesOnly) {
             for (ChannelOptimized ch : all) {
@@ -102,7 +111,8 @@ public final class CategoryHelper {
         // 历史分类：由 MainActivity 在 refreshChannelGrid 中根据 playHistory 重排序
         if (HISTORY.equals(categoryId)) return new ArrayList<>(all);
 
-        Map<String, List<ChannelOptimized>> buckets = buildSmartBuckets(all);
+        // 优先使用缓存的 buckets，避免每次点击都遍历全部频道做字符串匹配
+        Map<String, List<ChannelOptimized>> buckets = cachedBuckets != null ? cachedBuckets : buildSmartBuckets(all);
         List<ChannelOptimized> bucket = buckets.get(categoryId);
         return bucket != null ? new ArrayList<>(bucket) : result;
     }

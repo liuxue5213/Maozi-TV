@@ -18,4 +18,9 @@
     <string name="server_url_hint">输入后端服务器的 IP:端口</string>
     <string name="all_groups">全部</string>
     <string name="favorites_group">收藏</string>
+    <string name="source_loading">📡 加载中...</string>
+    <string name="source_info_format">📡 v%1$s · %2$d频道 · %3$d源 · %4$s</string>
+    <string name="source_count_format">📡 %1$d 频道</string>
+    <string name="channel_loaded_msg">频道已更新: %1$d 个频道 (%2$d 个源)</string>
+    <string name="source_check_settings">频道源信息</string>
 </resources>

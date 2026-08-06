@@ -33,7 +33,7 @@
             android:textStyle="bold"
             android:visibility="gone" />
 
-        <!-- Logo -->
+        <!-- Logo + 收藏角标（合并为一个 FrameLayout，减少层级） -->
         <FrameLayout
             android:layout_width="64dp"
             android:layout_height="64dp"
@@ -43,7 +43,8 @@
                 android:id="@+id/iv_logo"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:scaleType="fitCenter" />
+                android:scaleType="fitCenter"
+                android:contentDescription="频道logo" />
 
             <ImageView
                 android:id="@+id/iv_favorite"

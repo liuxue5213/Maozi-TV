@@ -165,6 +165,12 @@ def health():
 from .api.channels import router as channels_router  # noqa: E402
 app.include_router(channels_router)
 
+from .api.analytics import router as analytics_router  # noqa: E402
+app.include_router(analytics_router)
+
+from .api.sync import router as sync_router  # noqa: E402
+app.include_router(sync_router)
+
 # ── 静态文件 no-cache 中间件（避免浏览器缓存旧版 player.js）─────
 from starlette.middleware.base import BaseHTTPMiddleware  # noqa: E402
 

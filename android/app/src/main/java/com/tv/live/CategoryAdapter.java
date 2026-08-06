@@ -57,6 +57,17 @@ public class CategoryAdapter extends RecyclerView.Adapter<CategoryAdapter.ViewHo
         notifyDataSetChanged();
     }
 
+    /** 局部更新某个分类的计数（如收藏数量变化），避免全量刷新 */
+    public void updateCount(String categoryId, int count) {
+        for (int i = 0; i < items.size(); i++) {
+            if (items.get(i).category.id.equals(categoryId)) {
+                items.get(i).count = count;
+                notifyItemChanged(i);
+                return;
+            }
+        }
+    }
+
     public void setSelectedPosition(int position) {
         int old = selectedPosition;
         selectedPosition = position;

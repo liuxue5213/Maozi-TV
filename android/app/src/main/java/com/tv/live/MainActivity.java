@@ -42,13 +42,18 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
+import androidx.recyclerview.widget.DiffUtil;
 
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.DefaultLoadControl;
+import com.google.android.exoplayer2.DefaultRenderersFactory;
 import com.google.android.exoplayer2.ExoPlayer;
 import com.google.android.exoplayer2.MediaItem;
 import com.google.android.exoplayer2.PlaybackException;
 import com.google.android.exoplayer2.Player;
+import com.google.android.exoplayer2.mediacodec.MediaCodecInfo;
+import com.google.android.exoplayer2.mediacodec.MediaCodecSelector;
+import com.google.android.exoplayer2.mediacodec.MediaCodecUtil;
 import com.google.android.exoplayer2.source.DefaultMediaSourceFactory;
 import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
 import com.google.android.exoplayer2.Tracks;
@@ -76,10 +81,31 @@ public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = "MaoziTV";
 
-    // ── Standalone 模式：JSON 源地址 ──────────────────────────
+    // 请求码：SettingsActivity 返回
+    private static final int REQ_SETTINGS = 1001;
+
+    // ── Standalone 模式：JSON 源地址（回退用，优先使用 source-list.json）──
     private static final String[] JSON_URLS = {
             "https://gitee.com/liuxue5213/maozi-tv/raw/main/channels.json",
             "https://raw.githubusercontent.com/liuxue5213/Maozi-TV/main/channels.json",
+    };
+
+    // ── 软解：只使用软件解码器（OMX.google.*），兼容硬解黑屏的盒子 ──
+    private static final MediaCodecSelector SOFTWARE_ONLY_SELECTOR = new MediaCodecSelector() {
+        @Override
+        public java.util.List<MediaCodecInfo> getDecoderInfos(String mimeType,
+                                                              boolean requiresSecureDecoder)
+                throws MediaCodecUtil.DecoderQueryException {
+            java.util.List<MediaCodecInfo> all = MediaCodecSelector.DEFAULT
+                    .getDecoderInfos(mimeType, requiresSecureDecoder);
+            java.util.List<MediaCodecInfo> software = new ArrayList<>();
+            for (MediaCodecInfo info : all) {
+                if (info.name != null && info.name.startsWith("OMX.google.")) {
+                    software.add(info);
+                }
+            }
+            return software;
+        }
     };
 
     // ── SharedPreferences 缓存 ───────────────────────────────
@@ -87,12 +113,20 @@ public class MainActivity extends AppCompatActivity {
     private static final String KEY_SERVER_URL = "server_url";
     private static final String KEY_CACHED_JSON = "cached_channels_json";
     private static final String KEY_CACHED_VERSION = "cached_version";
+    private static final String KEY_SOURCE_INFO = "source_info_json"; // 信号源信息（版本/时间/频道数）
     private static final String KEY_CACHED_TS = "cached_generated_ts";
     private static final String KEY_MODE = "mode";
     private static final String KEY_FAVORITES = "favorites"; // 收藏频道 ID 集合
     private static final String KEY_LAST_CHANNEL = "last_channel_id"; // 上次播放的频道 ID
     private static final String KEY_PLAY_HISTORY = "play_history"; // 播放历史（频道 ID，逗号分隔）
+    private static final String KEY_HIDDEN_GROUPS = "hidden_groups"; // 用户隐藏的分组（逗号分隔）
     private static final String KEY_THEME = "theme"; // 主题（dark/blue/green）
+    private static final String KEY_SOFT_DECODER = "soft_decoder"; // 软解开关
+    private static final String KEY_BOOT_LAUNCH = "boot_launch_enabled"; // 开机自启
+    private static final String KEY_SLEEP_TIMER = "sleep_timer_minutes"; // 定时关机(分钟)
+    private static final String KEY_PARENTAL_LOCK = "parental_lock"; // 家长模式密码
+    private static final String KEY_PARENTAL_ENABLED = "parental_enabled"; // 家长模式开关
+    private static final String KEY_CUSTOM_SOURCES = "custom_sources"; // 自定义源 URL 列表
     private static final String DEFAULT_SERVER_URL = "http://192.168.1.100:8000";
 
     // ── 主题配色 ────────────────────────────────────────────
@@ -125,6 +159,7 @@ public class MainActivity extends AppCompatActivity {
     private ExoPlayer player;
     private DefaultTrackSelector trackSelector;
     private DefaultBandwidthMeter bandwidthMeter;
+    private SpeedMeter speedMeter = new SpeedMeter(); // 实时网速统计
 
     private View channelPanel;
     private RecyclerView rvCategories;
@@ -133,6 +168,9 @@ public class MainActivity extends AppCompatActivity {
     private ChannelAdapter channelAdapter;
     private EditText etSearch;
     private TextView tvPanelCount;
+    private TextView tvSourceInfo; // 信号源版本信息显示
+    private TextView tvEmptyState; // 搜索无结果空状态
+    private android.widget.ProgressBar progressChannels; // 频道加载进度条
 
     private TextView tvChannelName;
     private TextView tvChannelNumSmall;
@@ -160,6 +198,30 @@ public class MainActivity extends AppCompatActivity {
     // 画质轨道信息（ExoPlayer 的 VideoTrackSelection 列表）
     private List<String> qualityLabels = new ArrayList<>();
     private int currentQualityIndex = -1; // -1 = 自动
+
+    // ── 分类缓存（避免重复计算 buildSmartBuckets）────────────
+    private Map<String, List<ChannelOptimized>> cachedBuckets = null;
+
+    // ── 搜索防抖 ───────────────────────────────────────────
+    private Handler searchHandler = null;
+
+    // ── 用户偏好：隐藏的分组（Set 便于 O(1) 判断）──────────
+    private final java.util.Set<String> hiddenGroups = new java.util.HashSet<>();
+
+    // ── 播放器扩展状态 ──────────────────────────────────────
+    private boolean useSoftwareDecoder = false; // true=软解
+    private float currentPlaybackSpeed = 1.0f;  // 当前播放速度
+
+    // ── 定时关机 ────────────────────────────────────────────
+    private final Handler sleepTimerHandler = new Handler(Looper.getMainLooper());
+    private long sleepTimerEndTime = 0; // 定时关机结束时间(ms)，0=未设置
+
+    // ── 多画面模式 ──────────────────────────────────────────
+    private boolean multiviewActive = false; // 多画面是否激活
+    private android.widget.GridLayout multiviewGrid;
+    private final List<com.google.android.exoplayer2.ui.PlayerView> mvPlayerViews = new ArrayList<>();
+    private final List<ExoPlayer> mvPlayers = new ArrayList<>();
+    private static final int MV_COUNT = 4; // 2x2
 
     // ── 线程/Handler ────────────────────────────────────────
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -204,6 +266,10 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        // 🔥 全局异常捕获 — 防止未捕获异常直接闪退，记录日志 + 优雅恢复
+        setupGlobalExceptionHandler();
+
         setContentView(R.layout.activity_main);
 
         audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
@@ -216,16 +282,83 @@ public class MainActivity extends AppCompatActivity {
         // 加载已保存的主题
         loadTheme();
 
+        // 恢复画质限制设置（-1=自动）
+        applyQualityPreference(getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getInt("quality_max_height", -1));
+
         // 沉浸式全屏
         hideSystemUI();
 
-        // 拉取频道数据
-        executor.execute(this::fetchChannelsJson);
+        // 拉取频道数据（多源聚合）
+        executor.execute(this::fetchChannelsMultiSource);
 
-        // 启动后静默检查更新（延迟，避免与频道加载抢带宽）
+        // 启动后静默检查 APK 更新（延迟，避免与频道加载抢带宽）
         updateChecker = new UpdateChecker(this);
         new Handler(Looper.getMainLooper())
                 .postDelayed(() -> updateChecker.checkForUpdate(true), UPDATE_CHECK_DELAY);
+
+        // 注册 WorkManager 后台频道源周期检查（每 6 小时）
+        ChannelUpdateWorker.schedule(this);
+
+        // 恢复未到期的定时关机
+        restoreSleepTimer();
+
+        // 恢复上次播放速度
+        currentPlaybackSpeed = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getFloat("playback_speed", 1.0f);
+        if (player != null) {
+            player.setPlaybackSpeed(currentPlaybackSpeed);
+        }
+
+        // 家长模式：开启时启动要求输入密码
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        if (prefs.getBoolean(KEY_PARENTAL_ENABLED, false)) {
+            String savedPin = prefs.getString(KEY_PARENTAL_LOCK, "");
+            if (!savedPin.isEmpty()) {
+                promptPin("家长模式已开启，请输入密码", pin -> {
+                    if (!pin.equals(savedPin)) {
+                        Toast.makeText(this, "密码错误，即将退出", Toast.LENGTH_SHORT).show();
+                        finish();
+                    }
+                });
+            }
+        }
+
+        // 埋点：启动事件
+        CloudSync.track(this, "app_start", null, "", "");
+
+        // 云同步：加载云端收藏/历史（延迟，避免与频道加载抢带宽）
+        new Handler(Looper.getMainLooper()).postDelayed(this::loadCloudData, 6000);
+    }
+
+    /**
+     * 从云端加载收藏和历史，合并到本地。
+     * 仅在本地无数据时导入云端数据，避免覆盖用户当前状态。
+     */
+    private void loadCloudData() {
+        CloudSync.load(this, (favorites, history) -> {
+            if (favorites == null || favorites.isEmpty()) return;
+            if (!allChannels.isEmpty()) {
+                SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+                String localFav = prefs.getString(KEY_FAVORITES, "");
+                if (localFav == null || localFav.isEmpty()) {
+                    // 本地无收藏 → 导入云端收藏
+                    StringBuilder sb = new StringBuilder();
+                    for (Integer id : favorites) {
+                        if (sb.length() > 0) sb.append(",");
+                        sb.append(id);
+                    }
+                    prefs.edit().putString(KEY_FAVORITES, sb.toString()).apply();
+                    for (ChannelOptimized ch : allChannels) {
+                        if (favorites.contains(ch.id)) ch.isFavorite = true;
+                    }
+                    channelAdapter.notifyDataSetChanged();
+                    refreshCategoryNav();
+                    Toast.makeText(this, "已从云端恢复收藏 (" + favorites.size() + ")",
+                            Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
     }
 
     @Override
@@ -245,21 +378,105 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_SETTINGS) {
+            SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+            // 从设置页返回：刷新设置状态（主题/解码方式/比例/画质/倍速等）
+            loadTheme(); // 应用主题（可能已修改）
+            if (player != null) {
+                // 应用持久化的倍速
+                player.setPlaybackSpeed(prefs.getFloat("playback_speed", 1.0f));
+                // 应用画面比例
+                applyResizeMode(prefs.getInt("resize_mode", RESIZE_MODE_FIT));
+            }
+            // 应用画质限制（可能已修改）
+            applyQualityPreference(prefs.getInt("quality_max_height", -1));
+            // 设置页触发了「更新频道源」
+            if (resultCode == 1001) {
+                refreshChannels();
+            }
+            // 设置页触发了「分组显示管理」变更
+            if (resultCode == 1002) {
+                loadHiddenGroups();
+                // 重新计算分类桶 + 刷新分类栏和频道列表
+                cachedBuckets = CategoryHelper.buildSmartBuckets(filterHiddenGroups(allChannels));
+                refreshCategoryNav();
+                refreshChannelGrid();
+            }
+            // 刷新收藏状态（可能从云端/设置页变化）
+            if (channelAdapter != null) {
+                channelAdapter.notifyDataSetChanged();
+            }
+        }
+    }
+
+    @Override
     protected void onDestroy() {
-        // 清理 Handler
+        // 恢复默认异常处理器
+        if (originalExceptionHandler != null) {
+            Thread.setDefaultUncaughtExceptionHandler(originalExceptionHandler);
+        }
+
+        // 清理 Handler（含定时关机每秒任务和搜索防抖）
         mainHandler.removeCallbacksAndMessages(null);
         speedHandler.removeCallbacksAndMessages(null);
         channelNumberHandler.removeCallbacksAndMessages(null);
         panelAutoHideHandler.removeCallbacksAndMessages(null);
         infoOverlayHandler.removeCallbacksAndMessages(null);
+        sleepTimerHandler.removeCallbacksAndMessages(null);
+        if (searchHandler != null) {
+            searchHandler.removeCallbacksAndMessages(null);
+        }
 
-        // 释放播放器
+        // 释放主播放器
         if (player != null) {
             player.release();
             player = null;
         }
+        // 释放多画面播放器
+        releaseMultiviewPlayers();
         executor.shutdown();
         super.onDestroy();
+    }
+
+    // ── 全局异常捕获（闪退兜底）────────────────────────────
+    private Thread.UncaughtExceptionHandler originalExceptionHandler;
+
+    /**
+     * 设置全局未捕获异常处理器。
+     * 目的：
+     * 1. 记录崩溃日志（Log.e），方便排查
+     * 2. 主线程异常尽量恢复，不直接崩溃
+     * 3. 非主线程异常交给系统默认处理（避免死循环）
+     */
+    private void setupGlobalExceptionHandler() {
+        originalExceptionHandler = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
+            Log.e(TAG, "未捕获异常 [" + thread.getName() + "]: " + throwable.getMessage(), throwable);
+
+            if (thread.getName().equals("main")) {
+                // 主线程异常：尝试恢复，避免直接闪退
+                try {
+                    if (tvStatusContainer != null && tvStatus != null) {
+                        tvStatus.setText("发生错误，正在恢复...");
+                        tvStatusContainer.setVisibility(View.VISIBLE);
+                    }
+                } catch (Exception ignored) {}
+
+                // 记录后交给系统处理（Activity 可能已处于不可用状态）
+                if (originalExceptionHandler != null) {
+                    originalExceptionHandler.uncaughtException(thread, throwable);
+                }
+            } else {
+                // 子线程异常：交给系统默认处理
+                if (originalExceptionHandler != null) {
+                    originalExceptionHandler.uncaughtException(thread, throwable);
+                } else {
+                    System.exit(1);
+                }
+            }
+        });
     }
 
     // ══════════════════════════════════════════════════════════
@@ -273,6 +490,9 @@ public class MainActivity extends AppCompatActivity {
         rvChannels = findViewById(R.id.rv_channels);
         etSearch = findViewById(R.id.et_search);
         tvPanelCount = findViewById(R.id.tv_panel_count);
+        tvSourceInfo = findViewById(R.id.tv_source_info);
+        tvEmptyState = findViewById(R.id.tv_empty_state);
+        progressChannels = findViewById(R.id.progress_channels);
         tvChannelName = findViewById(R.id.tv_channel_name);
         tvChannelNumSmall = findViewById(R.id.tv_channel_num_small);
         tvChannelGroup = findViewById(R.id.tv_channel_group);
@@ -297,11 +517,25 @@ public class MainActivity extends AppCompatActivity {
         sigBar3 = findViewById(R.id.sig_bar3);
         sigBar4 = findViewById(R.id.sig_bar4);
 
+        // 多画面网格
+        multiviewGrid = findViewById(R.id.multiview_grid);
+        mvPlayerViews.clear();
+        mvPlayerViews.add(findViewById(R.id.mv_player1));
+        mvPlayerViews.add(findViewById(R.id.mv_player2));
+        mvPlayerViews.add(findViewById(R.id.mv_player3));
+        mvPlayerViews.add(findViewById(R.id.mv_player4));
+
+        // 搜索防抖：300ms 延迟，避免每次按键都刷新列表导致卡顿
+        searchHandler = new Handler(Looper.getMainLooper());
+        final Runnable searchRunnable = () -> {
+            refreshChannelGrid();
+        };
         etSearch.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
                 searchQuery = s != null ? s.toString().trim() : "";
-                refreshChannelGrid();
+                searchHandler.removeCallbacks(searchRunnable);
+                searchHandler.postDelayed(searchRunnable, 300);
             }
             @Override public void afterTextChanged(Editable s) {}
         });
@@ -325,6 +559,11 @@ public class MainActivity extends AppCompatActivity {
     private void showStatus(String text) {
         tvStatus.setText(text);
         if (tvStatusContainer != null) tvStatusContainer.setVisibility(View.VISIBLE);
+        // 加载中状态显示进度条
+        boolean isLoading = text.contains("加载") || text.contains("缓冲") || text.contains("更新");
+        if (progressChannels != null) {
+            progressChannels.setVisibility(isLoading && !text.contains("失败") ? View.VISIBLE : View.GONE);
+        }
         // 错误状态显示重试按钮
         if (btnRetry != null) {
             boolean isError = text.contains("失败") || text.contains("不可用") || text.contains("异常");
@@ -334,6 +573,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void hideStatus() {
         if (tvStatusContainer != null) tvStatusContainer.setVisibility(View.GONE);
+        if (progressChannels != null) progressChannels.setVisibility(View.GONE);
     }
 
     // ══════════════════════════════════════════════════════════
@@ -341,62 +581,82 @@ public class MainActivity extends AppCompatActivity {
     // ══════════════════════════════════════════════════════════
 
     private void initPlayer() {
-        bandwidthMeter = new DefaultBandwidthMeter.Builder(this).build();
+        try {
+            bandwidthMeter = new DefaultBandwidthMeter.Builder(this).build();
 
-        trackSelector = new DefaultTrackSelector(this);
+            trackSelector = new DefaultTrackSelector(this);
 
-        DefaultHttpDataSource.Factory httpFactory = new DefaultHttpDataSource.Factory()
-                .setUserAgent("MaoziTV/2.0")
-                .setConnectTimeoutMs(8000)
-                .setReadTimeoutMs(8000)
-                .setAllowCrossProtocolRedirects(true);
+            DefaultHttpDataSource.Factory httpFactory = new DefaultHttpDataSource.Factory()
+                    .setUserAgent("MaoziTV/2.0")
+                    .setConnectTimeoutMs(8000)
+                    .setReadTimeoutMs(8000)
+                    .setAllowCrossProtocolRedirects(true)
+                    .setTransferListener(speedMeter); // 挂载实时网速统计
 
-        DefaultMediaSourceFactory mediaSourceFactory = new DefaultMediaSourceFactory(this)
-                .setDataSourceFactory(httpFactory);
+            DefaultMediaSourceFactory mediaSourceFactory = new DefaultMediaSourceFactory(this)
+                    .setDataSourceFactory(httpFactory);
 
-        // 优化缓冲策略以减少内存使用：更小的最大缓冲和初始缓冲
-        DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
-                .setBufferDurationsMs(10000, 30000, 1500, 2000)  // 减小最大缓冲从50s到30s
-                .build();
+            // 优化缓冲策略以减少内存使用：更小的最大缓冲和初始缓冲
+            DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(10000, 30000, 1500, 2000)
+                    .build();
 
-        player = new ExoPlayer.Builder(this)
-                .setTrackSelector(trackSelector)
-                .setLoadControl(loadControl)
-                .setMediaSourceFactory(mediaSourceFactory)
-                .setBandwidthMeter(bandwidthMeter)
-                .build();
+            ExoPlayer.Builder playerBuilder = new ExoPlayer.Builder(this)
+                    .setTrackSelector(trackSelector)
+                    .setLoadControl(loadControl)
+                    .setMediaSourceFactory(mediaSourceFactory)
+                    .setBandwidthMeter(bandwidthMeter);
 
-        playerView.setPlayer(player);
+            // 软解：通过 MediaCodecSelector 只保留软件解码器（OMX.google.*）
+            // 硬解黑屏/花屏的盒子可切软解兜底
+            useSoftwareDecoder = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                    .getBoolean(KEY_SOFT_DECODER, false);
+            if (useSoftwareDecoder) {
+                DefaultRenderersFactory softFactory = new DefaultRenderersFactory(this)
+                        .setMediaCodecSelector(SOFTWARE_ONLY_SELECTOR)
+                        .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF);
+                playerBuilder.setRenderersFactory(softFactory);
+                Log.i(TAG, "已启用软解模式（仅软件解码器）");
+            }
 
-        // 播放事件监听
-        player.addListener(new Player.Listener() {
-            @Override
-            public void onPlaybackStateChanged(int state) {
-                if (state == Player.STATE_READY) {
-                    hideStatus();
-                    retryCount = 0; // 播放成功，重置重试
-                    // 播放成功后延迟隐藏频道信息叠加层
-                    if (currentChannel != null) {
-                        hideChannelInfoOverlay();
-                    }
-                } else if (state == Player.STATE_BUFFERING) {
-                    showStatus("缓冲中…");
-                    // 缓冲期间持续显示频道信息（不自动隐藏）
-                    if (currentChannel != null) {
-                        showChannelInfo(currentChannel, false);
+            player = playerBuilder.build();
+
+            playerView.setPlayer(player);
+
+            // 播放事件监听
+            player.addListener(new Player.Listener() {
+                @Override
+                public void onPlaybackStateChanged(int state) {
+                    if (state == Player.STATE_READY) {
+                        hideStatus();
+                        retryCount = 0;
+                        if (currentChannel != null) {
+                            hideChannelInfoOverlay();
+                        }
+                    } else if (state == Player.STATE_BUFFERING) {
+                        showStatus("缓冲中…");
+                        if (currentChannel != null) {
+                            showChannelInfo(currentChannel, false);
+                        }
                     }
                 }
-            }
 
-            @Override
-            public void onPlayerError(@NonNull PlaybackException error) {
-                Log.e(TAG, "播放错误: " + error.getMessage());
-                handlePlaybackError();
-            }
-        });
+                @Override
+                public void onPlayerError(@NonNull PlaybackException error) {
+                    Log.e(TAG, "播放错误: " + error.getMessage());
+                    handlePlaybackError();
+                }
+            });
 
-        // 启动网速刷新
-        startSpeedRefresh();
+            // 启动网速刷新
+            startSpeedRefresh();
+
+        } catch (Exception e) {
+            // ExoPlayer 在某些低端 TV 盒子上可能初始化失败（缺少 native codec）
+            Log.e(TAG, "播放器初始化失败: " + e.getMessage(), e);
+            player = null;
+            Toast.makeText(this, "播放器初始化失败，请检查设备解码器", Toast.LENGTH_LONG).show();
+        }
     }
 
     /**
@@ -431,19 +691,26 @@ public class MainActivity extends AppCompatActivity {
 
         Log.i(TAG, "播放: " + url);
 
-        // 切台时黑屏渐隐渐显
-        final android.view.View fadeOverlay = findViewById(R.id.channel_info_overlay);
-        android.view.animation.Animation fadeIn = android.view.animation.AnimationUtils.loadAnimation(this, R.anim.fade_in);
-        fadeIn.setDuration(300);
-        if (playerView != null) playerView.startAnimation(fadeIn);
+        try {
+            // 切台时淡入动画（缓存 view 引用，避免重复 findViewById）
+            if (channelInfoOverlay != null) {
+                android.view.animation.Animation fadeIn = android.view.animation.AnimationUtils
+                        .loadAnimation(this, R.anim.fade_in);
+                fadeIn.setDuration(300);
+                if (playerView != null) playerView.startAnimation(fadeIn);
+            }
 
-        MediaItem mediaItem = new MediaItem.Builder()
-                .setUri(Uri.parse(url))
-                .build();
+            MediaItem mediaItem = new MediaItem.Builder()
+                    .setUri(Uri.parse(url))
+                    .build();
 
-        player.setMediaItem(mediaItem);
-        player.prepare();
-        player.setPlayWhenReady(true);
+            player.setMediaItem(mediaItem);
+            player.prepare();
+            player.setPlayWhenReady(true);
+        } catch (Exception e) {
+            Log.e(TAG, "播放 URL 失败: " + url + " — " + e.getMessage());
+            showStatus("播放出错");
+        }
     }
 
     /**
@@ -453,6 +720,8 @@ public class MainActivity extends AppCompatActivity {
         currentChannel = channel;
         retryCount = 0;
         channel.currentSourceIndex = 0;
+        // 切台时重置测速器，避免旧频道数据污染新频道显示
+        if (speedMeter != null) speedMeter.reset();
         playUrl(channel.getCurrentSourceUrl());
 
         // 记住上次播放的频道，下次启动自动恢复
@@ -461,6 +730,9 @@ public class MainActivity extends AppCompatActivity {
 
         // 记录播放历史
         addToHistory(channel.id);
+
+        // 埋点：换台事件
+        CloudSync.track(this, "play_channel", channel.id, channel.name, "");
 
         // 立即显示频道信息叠加层（不自动隐藏，由播放状态控制）
         showChannelInfo(channel, false);
@@ -479,6 +751,9 @@ public class MainActivity extends AppCompatActivity {
 
     private void applyResizeMode(int mode) {
         currentResizeMode = mode;
+        // 持久化，供设置中心读取
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .edit().putInt("resize_mode", mode).apply();
         if (playerView == null) return;
         switch (mode) {
             case RESIZE_MODE_FIT:     playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);    break;
@@ -650,9 +925,11 @@ public class MainActivity extends AppCompatActivity {
             public void run() {
                 if (player != null && (player.getPlaybackState() == Player.STATE_READY
                         || player.getPlaybackState() == Player.STATE_BUFFERING)) {
+                    // 实时网速：用 SpeedMeter 统计的实际下载字节（每秒采样+3秒平滑）
+                    long realtimeBps = speedMeter.tick();
+                    tvSpeed.setText(formatSpeed(realtimeBps));
+                    // 更新信号强度：用带宽估算（供信号分级参考）
                     long bitrate = bandwidthMeter.getBitrateEstimate();
-                    tvSpeed.setText(formatSpeed(bitrate));
-                    // 更新信号强度
                     updateSignalBars(bitrate / 1000);
                     // 更新分辨率信息
                     if (tvResolution != null && player.getVideoFormat() != null) {
@@ -679,15 +956,20 @@ public class MainActivity extends AppCompatActivity {
         return String.format("%.0f kbps", bitrateBps / 1000.0);
     }
 
-    private String formatSpeed(long bitrateBps) {
-        if (bitrateBps <= 0) return "0 KB/s";
-        double bytesPerSec = bitrateBps / 8.0;
+    /**
+     * 格式化实时网速（字节/秒）。
+     * 单位自动适配，并保留足够精度让变化可见。
+     */
+    private String formatSpeed(long bytesPerSec) {
+        if (bytesPerSec <= 0) return "0 B/s";
         if (bytesPerSec < 1024) {
-            return String.format("%.0f B/s", bytesPerSec);
+            // <1KB 显示字节级
+            return bytesPerSec + " B/s";
         } else if (bytesPerSec < 1024 * 1024) {
-            return String.format("%.1f KB/s", bytesPerSec / 1024);
+            // KB 级保留1位小数，变化可见
+            return String.format("%.1f KB/s", bytesPerSec / 1024.0);
         } else {
-            return String.format("%.1f MB/s", bytesPerSec / (1024 * 1024));
+            return String.format("%.1f MB/s", bytesPerSec / (1024.0 * 1024));
         }
     }
 
@@ -707,6 +989,10 @@ public class MainActivity extends AppCompatActivity {
 
         int span = getGridSpanCount();
         GridLayoutManager gridLayout = new GridLayoutManager(this, span);
+        // 性能优化：Detach 时回收子 View 缓存，加快滚动；RecyclerView 自动预取可见项
+        gridLayout.setRecycleChildrenOnDetach(true);
+        rvChannels.setItemViewCacheSize(12); // 加大离屏缓存，减少重建
+        rvChannels.setHasFixedSize(true);    // 固定大小跳过 requestLayout 重算
         channelAdapter = new ChannelAdapter(new ChannelAdapter.OnChannelClickListener() {
             @Override
             public void onChannelClick(ChannelOptimized channel, int position) {
@@ -723,6 +1009,17 @@ public class MainActivity extends AppCompatActivity {
         });
         rvChannels.setLayoutManager(gridLayout);
         rvChannels.setAdapter(channelAdapter);
+
+        // 滚动时暂停 Glide 加载 logo，减少内存和 CPU 占用
+        rvChannels.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrollStateChanged(@NonNull RecyclerView rv, int newState) {
+                super.onScrollStateChanged(rv, newState);
+                if (channelAdapter != null) {
+                    channelAdapter.setScrolling(newState != RecyclerView.SCROLL_STATE_IDLE);
+                }
+            }
+        });
     }
 
     private int getGridSpanCount() {
@@ -805,16 +1102,18 @@ public class MainActivity extends AppCompatActivity {
     // 频道数据解析
     // ══════════════════════════════════════════════════════════
 
-    private boolean parseChannelsJson(String jsonData) {
+    /**
+     * 在后台线程解析 JSON，返回临时频道列表（不触碰 allChannels，线程安全）。
+     * 解析失败返回 null 并已在主线程提示错误。
+     */
+    private List<ChannelOptimized> parseChannelsData(String jsonData) {
         try {
             JSONObject root = new JSONObject(jsonData);
             JSONArray chArr = root.optJSONArray("channels");
             if (chArr == null) {
                 Log.e(TAG, "JSON 无 channels 数组");
-                return false;
+                return null;
             }
-
-            allChannels.clear();
 
             // 加载收藏集
             SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
@@ -825,18 +1124,26 @@ public class MainActivity extends AppCompatActivity {
             }
 
             // 解析频道（使用优化模型）
+            List<ChannelOptimized> parsed = new ArrayList<>();
+            int channelIndex = 0;
             for (int i = 0; i < chArr.length(); i++) {
                 ChannelOptimized ch = ChannelOptimized.fromJson(chArr.getJSONObject(i));
-                ch.channelNumber = i + 1; // 频道号从1开始
+
+                // 过滤无信号源频道（sources 为空则跳过）
+                if (ch.sources == null || ch.sources.isEmpty()) {
+                    continue;
+                }
+
+                ch.channelNumber = ++channelIndex; // 频道号从1开始，跳过无源频道后连续编号
 
                 // 恢复收藏状态
                 ch.isFavorite = favSet.contains(String.valueOf(ch.id));
 
-                allChannels.add(ch);
+                parsed.add(ch);
             }
 
-            Log.i(TAG, "解析完成: " + allChannels.size() + " 个频道");
-            return true;
+            Log.i(TAG, "解析完成: " + parsed.size() + " 个频道");
+            return parsed;
 
         } catch (Exception e) {
             Log.e(TAG, "JSON 解析失败: " + e.getMessage(), e);
@@ -845,8 +1152,72 @@ public class MainActivity extends AppCompatActivity {
                 Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
                 showStatus("频道数据异常，请更新频道源");
             });
-            return false;
+            return null;
         }
+    }
+
+    /** 必须在主线程调用：将解析结果安全换入 allChannels */
+    private void replaceAllChannels(List<ChannelOptimized> parsed) {
+        allChannels.clear();
+        allChannels.addAll(parsed);
+    }
+
+    // ── 用户偏好：隐藏分组 ─────────────────────────────────
+
+    /** 从 SharedPreferences 加载隐藏分组集合 */
+    private void loadHiddenGroups() {
+        hiddenGroups.clear();
+        String saved = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getString(KEY_HIDDEN_GROUPS, "");
+        if (saved != null && !saved.isEmpty()) {
+            Collections.addAll(hiddenGroups, saved.split(","));
+        }
+    }
+
+    /** 保存隐藏分组集合到 SharedPreferences */
+    private void saveHiddenGroups() {
+        StringBuilder sb = new StringBuilder();
+        for (String g : hiddenGroups) {
+            if (sb.length() > 0) sb.append(",");
+            sb.append(g);
+        }
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .edit().putString(KEY_HIDDEN_GROUPS, sb.toString()).apply();
+    }
+
+    /** 判断某个分组是否被用户隐藏 */
+    private boolean isGroupHidden(String group) {
+        return group != null && hiddenGroups.contains(group);
+    }
+
+    /**
+     * 过滤掉用户隐藏的分组，返回可见频道列表。
+     * 收藏/历史分类也应用该过滤（隐藏分组内的频道不再出现）。
+     */
+    private List<ChannelOptimized> filterHiddenGroups(List<ChannelOptimized> input) {
+        if (hiddenGroups.isEmpty()) return input;
+        List<ChannelOptimized> result = new ArrayList<>(input.size());
+        for (ChannelOptimized ch : input) {
+            if (!isGroupHidden(ch.group)) {
+                result.add(ch);
+            }
+        }
+        return result;
+    }
+
+    /** 切换某个分组的隐藏状态，返回新状态（true=已隐藏） */
+    private boolean toggleGroupHidden(String group) {
+        if (group == null || group.isEmpty()) return false;
+        boolean nowHidden;
+        if (hiddenGroups.contains(group)) {
+            hiddenGroups.remove(group);
+            nowHidden = false;
+        } else {
+            hiddenGroups.add(group);
+            nowHidden = true;
+        }
+        saveHiddenGroups();
+        return nowHidden;
     }
 
     /**
@@ -858,21 +1229,38 @@ public class MainActivity extends AppCompatActivity {
         searchQuery = "";
         if (etSearch != null) etSearch.setText("");
 
+        // 加载用户偏好（隐藏分组）
+        loadHiddenGroups();
+
+        // 预计算分类桶（基于过滤隐藏分组后的可见频道）
+        cachedBuckets = CategoryHelper.buildSmartBuckets(filterHiddenGroups(allChannels));
+
         refreshCategoryNav();
         refreshChannelGrid();
+        updateSourceInfoDisplay();
         hideStatus();
 
         if (!allChannels.isEmpty()) {
             SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-            int lastId = prefs.getInt(KEY_LAST_CHANNEL, -1);
-            ChannelOptimized last = null;
-            if (lastId >= 0) {
-                for (ChannelOptimized ch : allChannels) {
-                    if (ch.id == lastId) { last = ch; break; }
+            ChannelOptimized startChannel = null;
+
+            // 根据「启动进入频道」设置决定播放哪个频道
+            boolean startLast = prefs.getBoolean("start_last_channel", true);
+            if (startLast) {
+                int lastId = prefs.getInt(KEY_LAST_CHANNEL, -1);
+                if (lastId >= 0) {
+                    for (ChannelOptimized ch : allChannels) {
+                        // 跳过隐藏分组中的频道
+                        if (ch.id == lastId && !isGroupHidden(ch.group)) {
+                            startChannel = ch;
+                            break;
+                        }
+                    }
                 }
             }
-            if (last != null) {
-                playChannel(last);
+
+            if (startChannel != null) {
+                playChannel(startChannel);
             } else {
                 showChannelPanel();
             }
@@ -881,17 +1269,25 @@ public class MainActivity extends AppCompatActivity {
 
     private void refreshCategoryNav() {
         List<CategoryAdapter.CategoryItem> items = new ArrayList<>();
-        Map<String, List<ChannelOptimized>> buckets = CategoryHelper.buildSmartBuckets(allChannels);
+        // 使用缓存的 buckets（updateUI 时已预计算），避免重复遍历
+        Map<String, List<ChannelOptimized>> buckets = cachedBuckets != null
+                ? cachedBuckets : CategoryHelper.buildSmartBuckets(allChannels);
 
         for (CategoryHelper.Category cat : CategoryHelper.getNavCategories()) {
             int count;
             if (CategoryHelper.ALL.equals(cat.id)) {
-                count = allChannels.size();
+                count = filterHiddenGroups(allChannels).size();
             } else if (CategoryHelper.FAV.equals(cat.id)) {
                 count = 0;
-                for (ChannelOptimized ch : allChannels) if (ch.isFavorite) count++;
+                for (ChannelOptimized ch : allChannels) {
+                    if (ch.isFavorite && !isGroupHidden(ch.group)) count++;
+                }
             } else if (CategoryHelper.HISTORY.equals(cat.id)) {
-                count = playHistory.size();
+                count = 0;
+                for (String idStr : playHistory) {
+                    ChannelOptimized ch = findChannelById(parseIntSafe(idStr));
+                    if (ch != null && !isGroupHidden(ch.group)) count++;
+                }
             } else {
                 List<ChannelOptimized> bucket = buckets.get(cat.id);
                 count = bucket != null ? bucket.size() : 0;
@@ -931,13 +1327,10 @@ public class MainActivity extends AppCompatActivity {
     private void refreshChannelGrid() {
         if (channelAdapter != null) channelAdapter.setSearchQuery(searchQuery);
         Log.d(TAG, "refreshChannelGrid: currentCategoryId=" + currentCategoryId + ", allChannels.size()=" + allChannels.size());
-        List<ChannelOptimized> filtered = CategoryHelper.filter(allChannels, currentCategoryId, false);
+        // 传入缓存的 buckets，避免 filter 内部重复调用 buildSmartBuckets
+        List<ChannelOptimized> filtered = CategoryHelper.filter(allChannels, currentCategoryId, false, cachedBuckets);
         Log.d(TAG, "refreshChannelGrid: filtered.size()=" + filtered.size());
 
-        // 内存优化：在列表很大时主动建议垃圾回收
-        if (filtered.size() > 500) {
-            System.gc();
-        }
         // 应用排序
         applySort(filtered);
         // 历史分类：按观看历史排序（最新在前）
@@ -953,11 +1346,20 @@ public class MainActivity extends AppCompatActivity {
             }
             filtered = histList;
         }
+        // 用户偏好：过滤掉隐藏分组中的频道
+        filtered = filterHiddenGroups(filtered);
+
         filtered = CategoryHelper.search(filtered, searchQuery);
         channelAdapter.setChannels(filtered);
 
         if (tvPanelCount != null) {
             tvPanelCount.setText(filtered.size() + " 个频道");
+        }
+
+        // 空状态：搜索无结果时提示
+        if (tvEmptyState != null) {
+            boolean showEmpty = filtered.isEmpty() && searchQuery != null && !searchQuery.isEmpty();
+            tvEmptyState.setVisibility(showEmpty ? View.VISIBLE : View.GONE);
         }
 
         if (currentChannel != null) {
@@ -976,21 +1378,56 @@ public class MainActivity extends AppCompatActivity {
         String msg = channel.isFavorite ? "已收藏: " + channel.name : "取消收藏: " + channel.name;
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
 
-        // 刷新列表
-        channelAdapter.notifyDataSetChanged();
-        refreshCategoryNav();
+        // 埋点：收藏/取消收藏事件
+        CloudSync.track(this, channel.isFavorite ? "fav" : "unfav",
+                channel.id, channel.name, "");
+
+        // 性能优化：局部刷新该频道卡片，避免全量 notifyDataSetChanged
+        if (CategoryHelper.FAV.equals(currentCategoryId)) {
+            // 收藏分类下取消收藏 → 该卡片应从列表移除，全量刷新（此分类通常较小）
+            refreshChannelGrid();
+        } else {
+            // 其他分类：只更新该卡片
+            channelAdapter.notifyChannelChanged(channel.id);
+        }
+        // 轻量刷新收藏分类计数（仅更新收藏 Tab 的数字）
+        refreshFavoriteCount();
+    }
+
+    /**
+     * 仅更新左侧「收藏」分类的计数，避免每次收藏都重建整个分类栏。
+     */
+    private void refreshFavoriteCount() {
+        if (categoryAdapter == null || cachedBuckets == null) return;
+        int favCount = 0;
+        for (ChannelOptimized ch : allChannels) {
+            if (ch.isFavorite && !isGroupHidden(ch.group)) favCount++;
+        }
+        categoryAdapter.updateCount(CategoryHelper.FAV, favCount);
     }
 
     private void saveFavorites() {
+        // 性能优化：单次遍历 allChannels，同时构建本地存储 + 云同步列表
         StringBuilder sb = new StringBuilder();
+        List<Integer> favIds = new ArrayList<>();
         for (ChannelOptimized ch : allChannels) {
             if (ch.isFavorite) {
                 if (sb.length() > 0) sb.append(",");
                 sb.append(ch.id);
+                favIds.add(ch.id);
             }
         }
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .edit().putString(KEY_FAVORITES, sb.toString()).apply();
+
+        // 云同步：收藏 + 历史 推送到后端
+        List<Integer> histIds = new ArrayList<>();
+        for (String idStr : playHistory) {
+            try {
+                histIds.add(Integer.parseInt(idStr));
+            } catch (NumberFormatException ignored) {}
+        }
+        CloudSync.save(this, favIds, histIds);
     }
 
     // ══════════════════════════════════════════════════════════
@@ -1027,7 +1464,126 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ══════════════════════════════════════════════════════════
-    // JSON 拉取 (Gitee 优先 → GitHub 备用)
+    // 多源频道聚合拉取（source-list.json → 并行拉取 → 合并去重）
+    // ══════════════════════════════════════════════════════════
+
+    private void fetchChannelsMultiSource() {
+        Log.i(TAG, "开始多源频道聚合...");
+        // 本方法运行在后台 executor 线程，UI 更新必须 post 到主线程
+        mainHandler.post(() -> showStatus("加载频道源..."));
+
+        MultiSourceFetcher fetcher = new MultiSourceFetcher();
+
+        // 加载用户自定义源（后台线程读 SharedPreferences 是线程安全的）
+        String customSources = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getString(KEY_CUSTOM_SOURCES, "");
+        if (customSources != null && !customSources.isEmpty()) {
+            for (String url : customSources.split("\n")) {
+                fetcher.addCustomSource(url);
+            }
+        }
+
+        // fetchAll 回调运行在后台线程，全程不得直接触碰 UI
+        fetcher.fetchAll(result -> {
+            if (result == null || result.channels == null || result.channels.isEmpty()) {
+                Log.w(TAG, "多源聚合失败，回退到单源拉取");
+                // 多源失败 → 回退到旧的单源逻辑
+                fetchChannelsJson();
+                return;
+            }
+
+            // 保存信号源信息到 SharedPreferences（线程安全）
+            SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+            JSONObject info = new JSONObject();
+            try {
+                info.put("version", result.version);
+                info.put("generated_at", result.generatedAt);
+                info.put("generated_at_ts", result.generatedAtTs);
+                info.put("total_count", result.totalCount);
+                info.put("merged_count", result.mergedCount);
+                info.put("source_count", result.sourceCount);
+                info.put("fetch_time", System.currentTimeMillis());
+                if (!result.errors.isEmpty()) {
+                    info.put("errors", new JSONArray(result.errors));
+                }
+            } catch (Exception ignored) {}
+            prefs.edit().putString(KEY_SOURCE_INFO, info.toString()).apply();
+
+            // 构建合并后的 JSON 用于缓存
+            JSONObject mergedJson = buildMergedJson(result);
+            String jsonData = mergedJson.toString();
+
+            // 缓存（线程安全）
+            prefs.edit()
+                    .putString(KEY_CACHED_JSON, jsonData)
+                    .putInt(KEY_CACHED_VERSION, parseIntSafe(result.version))
+                    .putLong(KEY_CACHED_TS, result.generatedAtTs)
+                    .apply();
+
+            Log.i(TAG, "多源聚合成功: " + result.mergedCount + " 频道, " + result.sourceCount + " 源");
+
+            // 后台线程解析 JSON（不触碰 allChannels，返回临时列表）
+            ExecutorService parseExecutor = Executors.newSingleThreadExecutor();
+            parseExecutor.execute(() -> {
+                List<ChannelOptimized> parsed = parseChannelsData(jsonData);
+                mainHandler.post(() -> {
+                    if (parsed != null && !parsed.isEmpty()) {
+                        replaceAllChannels(parsed);
+                        updateUI();
+                        String msg = "频道已加载: " + result.mergedCount + " 个频道 (" + result.sourceCount + " 个源)";
+                        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
+                    }
+                });
+            });
+            parseExecutor.shutdown();
+        });
+    }
+
+    /** 将聚合结果构建为与原始 channels.json 兼容的 JSON */
+    private JSONObject buildMergedJson(MultiSourceFetcher.FetchResult result) {
+        JSONObject root = new JSONObject();
+        try {
+            root.put("version", parseIntSafe(result.version));
+            root.put("generated_at", result.generatedAt != null ? result.generatedAt : "");
+            root.put("generated_at_ts", result.generatedAtTs);
+            root.put("total", result.mergedCount);
+            root.put("source_count", result.sourceCount);
+
+            JSONArray chArr = new JSONArray();
+            for (ChannelOptimized ch : result.channels) {
+                JSONObject chObj = new JSONObject();
+                chObj.put("id", ch.id);
+                chObj.put("name", ch.name);
+                chObj.put("group", ch.group != null ? ch.group : "其他");
+                chObj.put("logo", ch.logo != null ? ch.logo : "");
+                chObj.put("url", ch.url != null ? ch.url : "");
+                chObj.put("healthy", ch.healthy);
+                chObj.put("region", ch.region != null ? ch.region : "domestic");
+
+                JSONArray srcArr = new JSONArray();
+                for (String src : ch.sources) {
+                    srcArr.put(src);
+                }
+                chObj.put("sources", srcArr);
+                chArr.put(chObj);
+            }
+            root.put("channels", chArr);
+        } catch (Exception e) {
+            Log.e(TAG, "构建合并 JSON 失败", e);
+        }
+        return root;
+    }
+
+    private int parseIntSafe(String s) {
+        try {
+            return Integer.parseInt(s);
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // JSON 拉取 (Gitee 优先 → GitHub 备用) — 回退方案
     // ══════════════════════════════════════════════════════════
 
     private void fetchChannelsJson() {
@@ -1086,13 +1642,20 @@ public class MainActivity extends AppCompatActivity {
                             .apply();
                     Log.i(TAG, "新数据已缓存: v" + remoteVersion + " ts=" + remoteTs);
 
-                    String data = jsonData;
-                    mainHandler.post(() -> {
-                        if (parseChannelsJson(data)) {
-                            updateUI();
-                            Toast.makeText(MainActivity.this, "频道已更新", Toast.LENGTH_SHORT).show();
-                        }
+                    // 后台线程解析，避免主线程阻塞
+                    final String data = jsonData;
+                    ExecutorService parseExecutor = Executors.newSingleThreadExecutor();
+                    parseExecutor.execute(() -> {
+                        List<ChannelOptimized> parsed = parseChannelsData(data);
+                        mainHandler.post(() -> {
+                            if (parsed != null && !parsed.isEmpty()) {
+                                replaceAllChannels(parsed);
+                                updateUI();
+                                Toast.makeText(MainActivity.this, "频道已更新", Toast.LENGTH_SHORT).show();
+                            }
+                        });
                     });
+                    parseExecutor.shutdown();
                 } else {
                     Log.i(TAG, "数据未变化，使用缓存");
                     useCachedJson(cachedJson);
@@ -1118,12 +1681,19 @@ public class MainActivity extends AppCompatActivity {
             });
             return;
         }
-        mainHandler.post(() -> {
-            if (parseChannelsJson(cachedJson)) {
-                updateUI();
-                Toast.makeText(MainActivity.this, "使用缓存的频道列表", Toast.LENGTH_SHORT).show();
-            }
+        // 后台线程解析缓存 JSON
+        ExecutorService parseExecutor = Executors.newSingleThreadExecutor();
+        parseExecutor.execute(() -> {
+            List<ChannelOptimized> parsed = parseChannelsData(cachedJson);
+            mainHandler.post(() -> {
+                if (parsed != null && !parsed.isEmpty()) {
+                    replaceAllChannels(parsed);
+                    updateUI();
+                    Toast.makeText(MainActivity.this, "使用缓存的频道列表", Toast.LENGTH_SHORT).show();
+                }
+            });
         });
+        parseExecutor.shutdown();
     }
 
     /**
@@ -1138,11 +1708,118 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ══════════════════════════════════════════════════════════
-    // 多画面模式（2x2 网格，实验性）
+    // 多画面模式（2x2 网格：当前频道 + 相邻 3 个频道）
     // ══════════════════════════════════════════════════════════
 
     private void toggleMultiview() {
-        Toast.makeText(this, "多画面模式 (实验性功能，需要多 ExoPlayer 实例)", Toast.LENGTH_SHORT).show();
+        if (multiviewActive) {
+            exitMultiview();
+        } else {
+            enterMultiview();
+        }
+    }
+
+    private void enterMultiview() {
+        if (allChannels.isEmpty()) {
+            Toast.makeText(this, "暂无频道", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        // 暂停主播放器
+        if (player != null) {
+            player.setPlayWhenReady(false);
+        }
+        // 隐藏主画面和信息叠加层
+        playerView.setVisibility(View.INVISIBLE);
+        channelInfoOverlay.setVisibility(View.GONE);
+        tvSpeed.setVisibility(View.GONE);
+        multiviewGrid.setVisibility(View.VISIBLE);
+
+        // 选 4 个频道：当前频道 + 后续 3 个（全部频道列表）
+        List<ChannelOptimized> list = channelAdapter.getChannels();
+        if (list == null || list.isEmpty()) list = allChannels;
+
+        List<ChannelOptimized> mvChannels = new ArrayList<>();
+        if (currentChannel != null) {
+            int idx = -1;
+            for (int i = 0; i < list.size(); i++) {
+                if (list.get(i).id == currentChannel.id) { idx = i; break; }
+            }
+            if (idx >= 0) {
+                for (int k = 0; k < MV_COUNT; k++) {
+                    mvChannels.add(list.get((idx + k) % list.size()));
+                }
+            }
+        }
+        while (mvChannels.size() < MV_COUNT && list.size() > mvChannels.size()) {
+            mvChannels.add(list.get(mvChannels.size() % list.size()));
+        }
+        if (mvChannels.isEmpty()) return;
+
+        // 为每个格子创建独立 ExoPlayer 并播放
+        releaseMultiviewPlayers();
+        mvPlayers.clear();
+
+        // 多画面：缩小缓冲避免 4 路流同时大缓冲撑爆内存（低端盒子 OOM 防护）
+        com.google.android.exoplayer2.DefaultLoadControl mvLoadControl =
+                new com.google.android.exoplayer2.DefaultLoadControl.Builder()
+                        .setBufferDurationsMs(3000, 8000, 1000, 1500) // 最小缓冲(3s/8s)
+                        .build();
+
+        for (int i = 0; i < mvChannels.size(); i++) {
+            ChannelOptimized ch = mvChannels.get(i);
+            if (ch.sources == null || ch.sources.isEmpty()) continue;
+
+            ExoPlayer mvPlayer = new ExoPlayer.Builder(this)
+                    .setTrackSelector(new DefaultTrackSelector(this))
+                    .setLoadControl(mvLoadControl)
+                    .build();
+            com.google.android.exoplayer2.ui.PlayerView pv = mvPlayerViews.get(i);
+            pv.setPlayer(mvPlayer);
+            pv.setVisibility(View.VISIBLE);
+
+            String url = ch.getCurrentSourceUrl();
+            if (url != null && !url.isEmpty()) {
+                MediaItem item = new MediaItem.Builder().setUri(Uri.parse(url)).build();
+                mvPlayer.setMediaItem(item);
+                mvPlayer.prepare();
+                mvPlayer.setPlayWhenReady(true);
+            }
+            mvPlayers.add(mvPlayer);
+        }
+
+        multiviewActive = true;
+        Toast.makeText(this, "多画面模式 (当前频道 + 后3个频道)", Toast.LENGTH_SHORT).show();
+    }
+
+    private void exitMultiview() {
+        multiviewActive = false;
+        multiviewGrid.setVisibility(View.GONE);
+        playerView.setVisibility(View.VISIBLE);
+        channelInfoOverlay.setVisibility(View.VISIBLE);
+        tvSpeed.setVisibility(View.VISIBLE);
+
+        releaseMultiviewPlayers();
+
+        // 恢复主播放器
+        if (player != null) {
+            player.setPlayWhenReady(true);
+        }
+        // 重播当前频道
+        if (currentChannel != null) {
+            playChannel(currentChannel);
+        }
+    }
+
+    private void releaseMultiviewPlayers() {
+        for (int i = 0; i < mvPlayers.size(); i++) {
+            try {
+                ExoPlayer p = mvPlayers.get(i);
+                if (p != null) p.release();
+                mvPlayerViews.get(i).setPlayer(null);
+            } catch (Exception ignored) {}
+        }
+        mvPlayers.clear();
     }
 
     // ══════════════════════════════════════════════════════════
@@ -1297,68 +1974,373 @@ public class MainActivity extends AppCompatActivity {
 
     private void showEpgDialog(ChannelOptimized channel) {
         if (channel == null) return;
-        // EPG 暂未接入后端数据源，直接 Toast 提示而非弹空壳对话框
-        Toast.makeText(this, channel.name + "：EPG 节目单暂未接入", Toast.LENGTH_SHORT).show();
+
+        // 立即弹出一个"加载中"的节目单框架
+        AlertDialog loading = new AlertDialog.Builder(this)
+                .setTitle(channel.name + " · 节目单")
+                .setMessage("正在加载 EPG 数据...")
+                .setNegativeButton("关闭", null)
+                .show();
+
+        // 后台拉取 EPG（优先后端 API，失败则回退本地 XMLTV 缓存）
+        executor.execute(() -> {
+            List<String[]> programList = fetchEpgPrograms(channel);
+
+            mainHandler.post(() -> {
+                try {
+                    loading.dismiss();
+                } catch (Exception ignored) {}
+
+                if (programList.isEmpty()) {
+                    Toast.makeText(this, "暂无该频道 EPG 数据", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+
+                // 用 TextView 展示节目列表（简单可靠，避免再建复杂布局）
+                StringBuilder sb = new StringBuilder();
+                for (String[] p : programList) { // {时间, 节目名}
+                    sb.append(p[0]).append("  ").append(p[1]).append('\n');
+                }
+
+                new AlertDialog.Builder(this)
+                        .setTitle(channel.name + " · 节目单")
+                        .setMessage(sb.toString().trim())
+                        .setNegativeButton("关闭", null)
+                        .show();
+            });
+        });
+    }
+
+    /**
+     * 拉取频道 EPG 节目单。
+     * 优先请求后端服务器 /api/epg?channel=xxx；
+     * 后端不可用时回退返回最近 24h 占位数据（标注"后端未启用"）。
+     */
+    private List<String[]> fetchEpgPrograms(ChannelOptimized channel) {
+        List<String[]> result = new ArrayList<>();
+
+        // 尝试后端 EPG API
+        try {
+            String server = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                    .getString(KEY_SERVER_URL, DEFAULT_SERVER_URL);
+            String api = server + "/api/epg?channel="
+                    + java.net.URLEncoder.encode(channel.name, "UTF-8");
+
+            HttpURLConnection conn = (HttpURLConnection) new URL(api).openConnection();
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
+            conn.setRequestProperty("User-Agent", "MaoziTV-EPG/2.0");
+            if (conn.getResponseCode() == 200) {
+                StringBuilder sb = new StringBuilder();
+                BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8));
+                String line;
+                while ((line = reader.readLine()) != null) sb.append(line);
+                reader.close();
+                conn.disconnect();
+
+                JSONObject obj = new JSONObject(sb.toString());
+                JSONArray arr = obj.optJSONArray("programs");
+                if (arr != null && arr.length() > 0) {
+                    for (int i = 0; i < arr.length(); i++) {
+                        JSONObject p = arr.getJSONObject(i);
+                        result.add(new String[]{
+                                p.optString("start", "").replace("T", " ").substring(0, 16),
+                                p.optString("title", "未知节目")
+                        });
+                    }
+                    return result; // 后端有数据直接返回
+                }
+            }
+            conn.disconnect();
+        } catch (Exception e) {
+            Log.d(TAG, "EPG 后端不可用: " + e.getMessage());
+        }
+
+        // 后端不可用 → 返回占位提示
+        result.add(new String[]{"--", "EPG 数据源未配置"});
+        result.add(new String[]{"--", "可在设置中配置后端服务器地址"});
+        result.add(new String[]{"--", "或等待后端 EPG 服务部署"});
+        return result;
     }
 
     // ══════════════════════════════════════════════════════════
-    // 设置 / 模式切换
+    // 设置：MENU 键已改为打开 SettingsActivity（全屏设置中心）
+    // 下列子方法保留为兼容入口，供 SettingsActivity 逻辑复用
     // ══════════════════════════════════════════════════════════
 
-    private void showSettingsDialog() {
+    /** 当前解码方式标签 */
+    private String currentDecoderLabel() {
+        return useSoftwareDecoder ? "软解" : "硬解";
+    }
+
+    /** 切换解码方式（硬解 → 软解） */
+    private void toggleDecoder() {
+        useSoftwareDecoder = !useSoftwareDecoder;
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .edit().putBoolean(KEY_SOFT_DECODER, useSoftwareDecoder).apply();
+        Toast.makeText(this, "已切换为" + currentDecoderLabel() + "，重新播放生效",
+                Toast.LENGTH_SHORT).show();
+        // 重新加载当前频道生效
+        if (currentChannel != null) {
+            playChannel(currentChannel);
+        }
+    }
+
+    private void showDecoderDialog() {
         new AlertDialog.Builder(this)
-                .setTitle("设置")
-                .setItems(new String[]{
-                        "检查更新",
-                        "更新频道源 (重新拉取)",
-                        "频道健康检查",
-                        "切换播放源",
-                        "画质 (自动)",
-                        "画面比例 (" + RESIZE_MODE_LABELS[currentResizeMode] + ")",
-                        "截图",
-                        "测速选最快源",
-                        "排序 (" + SORT_LABELS[currentSortMode] + ")",
-                        "主题",
-                        "画中画",
-                        "独立模式 (Gitee/GitHub)",
-                        "服务器模式 (连接后端 API)"
-                }, (dialog, which) -> {
-                    if (which == 0) {
-                        if (updateChecker != null) {
-                            updateChecker.checkForUpdate(false);
-                        } else {
-                            updateChecker = new UpdateChecker(this);
-                            updateChecker.checkForUpdate(false);
-                        }
-                    } else if (which == 1) {
-                        refreshChannels();
-                    } else if (which == 2) {
-                        runHealthCheck();
-                    } else if (which == 3) {
-                        showSourceSwitchDialog();
-                    } else if (which == 4) {
-                        showQualityDialog();
-                    } else if (which == 5) {
-                        showResizeModeDialog();
-                    } else if (which == 6) {
-                        takeScreenshot();
-                    } else if (which == 7) {
-                        autoSelectFastestSource();
-                    } else if (which == 8) {
-                        cycleSortMode();
-                    } else if (which == 9) {
-                        showThemeDialog();
-                    } else if (which == 10) {
-                        enterPipMode();
-                    } else if (which == 11) {
-                        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-                        prefs.edit().putString(KEY_MODE, "standalone").apply();
-                        Toast.makeText(this, "当前为独立模式", Toast.LENGTH_SHORT).show();
-                    } else {
-                        showUrlDialog();
-                    }
+                .setTitle("解码方式")
+                .setSingleChoiceItems(new String[]{"硬解（默认，性能好）", "软解（兼容性好）"},
+                        useSoftwareDecoder ? 1 : 0, (dialog, which) -> {
+                            boolean wantSoft = which == 1;
+                            if (wantSoft != useSoftwareDecoder) {
+                                toggleDecoder();
+                            }
+                            dialog.dismiss();
+                        })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // 倍速播放
+    // ══════════════════════════════════════════════════════════
+    private void showSpeedDialog() {
+        if (player == null) {
+            Toast.makeText(this, "播放器未就绪", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        final String[] speeds = {"0.5x", "0.75x", "1.0x", "1.25x", "1.5x", "2.0x"};
+        int cur = 2; // 默认 1.0x 索引2
+        float current = currentPlaybackSpeed;
+        for (int i = 0; i < speeds.length; i++) {
+            try {
+                if (Float.parseFloat(speeds[i].replace("x", "")) == current) {
+                    cur = i;
+                    break;
+                }
+            } catch (Exception ignored) {}
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("播放速度")
+                .setSingleChoiceItems(speeds, cur, (dialog, which) -> {
+                    float speed = Float.parseFloat(speeds[which].replace("x", ""));
+                    setPlaybackSpeed(speed);
+                    dialog.dismiss();
                 })
                 .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void setPlaybackSpeed(float speed) {
+        currentPlaybackSpeed = speed;
+        if (player != null) {
+            player.setPlaybackSpeed(speed);
+        }
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .edit().putFloat("playback_speed", speed).apply();
+        Toast.makeText(this, "播放速度: " + speed + "x", Toast.LENGTH_SHORT).show();
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // 定时关机 / 睡眠
+    // ══════════════════════════════════════════════════════════
+    private void showSleepTimerDialog() {
+        new AlertDialog.Builder(this)
+                .setTitle("定时关机")
+                .setItems(new String[]{"30 分钟", "1 小时", "2 小时", "4 小时", "关闭定时"},
+                        (dialog, which) -> {
+                            switch (which) {
+                                case 0: scheduleSleepTimer(30); break;
+                                case 1: scheduleSleepTimer(60); break;
+                                case 2: scheduleSleepTimer(120); break;
+                                case 3: scheduleSleepTimer(240); break;
+                                default: cancelSleepTimer(); break;
+                            }
+                            dialog.dismiss();
+                        })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void scheduleSleepTimer(int minutes) {
+        sleepTimerEndTime = System.currentTimeMillis() + minutes * 60_000L;
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .edit().putLong(KEY_SLEEP_TIMER, sleepTimerEndTime).apply();
+        Toast.makeText(this, "将在 " + minutes + " 分钟后关机", Toast.LENGTH_SHORT).show();
+        checkSleepTimer();
+    }
+
+    private void cancelSleepTimer() {
+        sleepTimerEndTime = 0;
+        sleepTimerHandler.removeCallbacksAndMessages(null);
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .edit().remove(KEY_SLEEP_TIMER).apply();
+        Toast.makeText(this, "定时关机已取消", Toast.LENGTH_SHORT).show();
+    }
+
+    /** 每秒检查一次定时关机时间是否到达 */
+    private void checkSleepTimer() {
+        sleepTimerHandler.removeCallbacksAndMessages(null);
+        if (sleepTimerEndTime <= 0) return;
+        long remaining = sleepTimerEndTime - System.currentTimeMillis();
+        if (remaining <= 0) {
+            // 时间到 → 关闭 App（回到桌面）
+            sleepTimerEndTime = 0;
+            Toast.makeText(this, "定时关机时间到", Toast.LENGTH_SHORT).show();
+            finishAndRemoveTask();
+        } else {
+            sleepTimerHandler.postDelayed(this::checkSleepTimer, 1000);
+        }
+    }
+
+    /** 开机时恢复未到期的定时关机 */
+    private void restoreSleepTimer() {
+        sleepTimerEndTime = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getLong(KEY_SLEEP_TIMER, 0);
+        if (sleepTimerEndTime > System.currentTimeMillis()) {
+            checkSleepTimer();
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // 开机自启开关
+    // ══════════════════════════════════════════════════════════
+    private void toggleBootLaunch() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        boolean enabled = prefs.getBoolean(KEY_BOOT_LAUNCH, false);
+        enabled = !enabled;
+        prefs.edit().putBoolean(KEY_BOOT_LAUNCH, enabled).apply();
+        Toast.makeText(this, "开机自启: " + (enabled ? "已开启" : "已关闭"),
+                Toast.LENGTH_SHORT).show();
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // 自定义源导入（m3u / JSON / 接口 URL）
+    // ══════════════════════════════════════════════════════════
+    private void showCustomSourceDialog() {
+        // 显示已添加的自定义源列表 + 添加按钮
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        String saved = prefs.getString(KEY_CUSTOM_SOURCES, "");
+        List<String> customUrls = new ArrayList<>();
+        if (!saved.isEmpty()) {
+            Collections.addAll(customUrls, saved.split("\n"));
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle("自定义源 (" + customUrls.size() + ")")
+                .setItems(customUrls.toArray(new String[0]), (dialog, which) -> {
+                    // 长按删除
+                })
+                .setPositiveButton("添加源", (dialog, which) -> showAddCustomSourceInput())
+                .setNegativeButton("清除全部", (dialog, which) -> {
+                    prefs.edit().remove(KEY_CUSTOM_SOURCES).apply();
+                    Toast.makeText(this, "已清除自定义源", Toast.LENGTH_SHORT).show();
+                })
+                .setNeutralButton("关闭", null)
+                .show();
+    }
+
+    private void showAddCustomSourceInput() {
+        EditText input = new EditText(this);
+        input.setHint("https://.../channels.json 或 m3u 地址");
+        input.setTextColor(0xFFFFFFFF);
+        input.setHintTextColor(0x88FFFFFF);
+        input.setSingleLine(true);
+
+        new AlertDialog.Builder(this)
+                .setTitle("添加自定义源")
+                .setMessage("支持 channels.json / m3u / txt (TVBox接口) 地址")
+                .setView(input)
+                .setPositiveButton("添加", (dialog, which) -> {
+                    String url = input.getText().toString().trim();
+                    if (url.isEmpty()) return;
+                    saveCustomSource(url);
+                    refreshChannels();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void saveCustomSource(String url) {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        String saved = prefs.getString(KEY_CUSTOM_SOURCES, "");
+        if (!saved.contains(url)) {
+            String newVal = saved.isEmpty() ? url : saved + "\n" + url;
+            prefs.edit().putString(KEY_CUSTOM_SOURCES, newVal).apply();
+            Toast.makeText(this, "自定义源已添加", Toast.LENGTH_SHORT).show();
+        } else {
+            Toast.makeText(this, "该源已存在", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // 家长模式 / 儿童锁
+    // ══════════════════════════════════════════════════════════
+    private void showParentalLockDialog() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        boolean enabled = prefs.getBoolean(KEY_PARENTAL_ENABLED, false);
+        String savedPin = prefs.getString(KEY_PARENTAL_LOCK, "");
+
+        if (enabled) {
+            // 已开启 → 需输入密码解锁关闭
+            promptPin("输入密码关闭家长模式", pin -> {
+                if (pin.equals(savedPin)) {
+                    prefs.edit().putBoolean(KEY_PARENTAL_ENABLED, false).apply();
+                    Toast.makeText(this, "家长模式已关闭", Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(this, "密码错误", Toast.LENGTH_SHORT).show();
+                }
+            });
+        } else {
+            // 未开启 → 设置密码
+            promptPin("设置家长模式密码 (4位数字)", pin -> {
+                if (pin.length() < 4) {
+                    Toast.makeText(this, "密码至少 4 位", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                prefs.edit()
+                        .putString(KEY_PARENTAL_LOCK, pin)
+                        .putBoolean(KEY_PARENTAL_ENABLED, true)
+                        .apply();
+                Toast.makeText(this, "家长模式已开启", Toast.LENGTH_SHORT).show();
+            });
+        }
+    }
+
+    private void promptPin(String title, java.util.function.Consumer<String> onPin) {
+        EditText input = new EditText(this);
+        input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+        input.setTextColor(0xFFFFFFFF);
+        input.setSingleLine(true);
+
+        new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setView(input)
+                .setPositiveButton("确定", (dialog, which) -> onPin.accept(input.getText().toString().trim()))
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // 关于 / 版权声明
+    // ══════════════════════════════════════════════════════════
+    private void showAboutDialog() {
+        String versionName = "";
+        try {
+            versionName = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception ignored) {}
+
+        String msg = "帽子TV v" + versionName + "\n\n"
+                + "本应用仅提供播放器功能，不包含任何内容。\n"
+                + "直播源来自公开的开源仓库（GitHub/Gitee），\n"
+                + "版权归原权利人所有。\n\n"
+                + "📡 " + allChannels.size() + " 个频道";
+
+        new AlertDialog.Builder(this)
+                .setTitle("关于")
+                .setMessage(msg)
+                .setPositiveButton("确定", null)
                 .show();
     }
 
@@ -1419,6 +2401,9 @@ public class MainActivity extends AppCompatActivity {
      * @param maxHeight -1=自动(ABR)；>0=限制最高分辨率
      */
     private void applyQualityPreference(int maxHeight) {
+        // 持久化，供设置中心读取
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .edit().putInt("quality_max_height", maxHeight).apply();
         if (trackSelector == null) return;
         DefaultTrackSelector.Parameters.Builder params = trackSelector.buildUponParameters();
         if (maxHeight < 0) {
@@ -1497,11 +2482,13 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void jumpToChannel(int channelNumber) {
-        if (channelNumber < 1 || channelNumber > allChannels.size()) {
-            Toast.makeText(this, "频道号超出范围 (1-" + allChannels.size() + ")", Toast.LENGTH_SHORT).show();
+        // 使用过滤隐藏分组后的可见频道列表，避免频道号落在隐藏频道上
+        List<ChannelOptimized> visible = filterHiddenGroups(allChannels);
+        if (channelNumber < 1 || channelNumber > visible.size()) {
+            Toast.makeText(this, "频道号超出范围 (1-" + visible.size() + ")", Toast.LENGTH_SHORT).show();
             return;
         }
-        ChannelOptimized target = allChannels.get(channelNumber - 1);
+        ChannelOptimized target = visible.get(channelNumber - 1);
         currentCategoryId = CategoryHelper.ALL;
         playChannel(target);
         Log.i(TAG, "跳转到频道 " + channelNumber + ": " + target.name);
@@ -1553,9 +2540,9 @@ public class MainActivity extends AppCompatActivity {
         }
 
         switch (keyCode) {
-            // MENU 键 → 设置
+            // MENU 键 → 打开设置中心（全屏设置页）
             case KeyEvent.KEYCODE_MENU:
-                showSettingsDialog();
+                startActivityForResult(new Intent(this, SettingsActivity.class), REQ_SETTINGS);
                 return true;
 
             // OK/Enter 短按 → 打开选台面板（长按另走收藏）
@@ -1772,5 +2759,43 @@ public class MainActivity extends AppCompatActivity {
             return true;
         }
         return super.onTouchEvent(event);
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // 信号源信息显示
+    // ══════════════════════════════════════════════════════════
+
+    /** 更新面板头部的信号源版本/时间/频道数显示 */
+    private void updateSourceInfoDisplay() {
+        if (tvSourceInfo == null) return;
+
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        String infoStr = prefs.getString(KEY_SOURCE_INFO, null);
+
+        String display;
+        if (infoStr != null) {
+            try {
+                JSONObject info = new JSONObject(infoStr);
+                String version = info.optString("version", "?");
+                int mergedCount = info.optInt("merged_count", allChannels.size());
+                int sourceCount = info.optInt("source_count", 1);
+                String generatedAt = info.optString("generated_at", "");
+
+                // 提取日期部分 (YYYY-MM-DD)
+                String date = "";
+                if (generatedAt.length() >= 10) {
+                    date = generatedAt.substring(0, 10);
+                }
+
+                display = String.format("📡 v%s · %d频道 · %d源 · %s",
+                        version, mergedCount, sourceCount, date);
+            } catch (Exception e) {
+                display = "📡 " + allChannels.size() + " 频道";
+            }
+        } else {
+            display = "📡 " + allChannels.size() + " 频道";
+        }
+
+        tvSourceInfo.setText(display);
     }
 }

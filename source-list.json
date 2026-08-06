@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "description": "Maozi-TV 信号源清单 - 多源聚合配置",
+  "sources": [
+    {
+      "name": "主源 (Gitee)",
+      "url": "https://gitee.com/liuxue5213/maozi-tv/raw/main/channels.json",
+      "priority": 1,
+      "enabled": true
+    },
+    {
+      "name": "GitHub 镜像",
+      "url": "https://raw.githubusercontent.com/liuxue5213/Maozi-TV/main/channels.json",
+      "priority": 2,
+      "enabled": true
+    },
+    {
+      "name": "jsdelivr CDN",
+      "url": "https://cdn.jsdelivr.net/gh/liuxue5213/Maozi-TV@main/channels.json",
+      "priority": 3,
+      "enabled": true
+    }
+  ],
+  "version_check_urls": [
+    "https://gitee.com/liuxue5213/maozi-tv/raw/main/version.json",
+    "https://cdn.jsdelivr.net/gh/liuxue5213/Maozi-TV@main/version.json",
+    "https://raw.githubusercontent.com/liuxue5213/Maozi-TV/main/version.json"
+  ],
+  "source_list_urls": [
+    "https://gitee.com/liuxue5213/maozi-tv/raw/main/source-list.json",
+    "https://cdn.jsdelivr.net/gh/liuxue5213/Maozi-TV@main/source-list.json",
+    "https://raw.githubusercontent.com/liuxue5213/Maozi-TV/main/source-list.json"
+  ]
+}
