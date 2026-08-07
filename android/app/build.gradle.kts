@@ -8,7 +8,7 @@ android {
 
     defaultConfig {
         applicationId = "com.tv.live"
-        minSdk = 19                      // 兼容小米盒子（Android 4.4）
+        minSdk = 21                      // ExoPlayer 2.19 要求 minSdk 21（Android 5.0+）
         targetSdk = 30                   // 降到 30：避免 34 的严格返回键/前台权限问题
         versionCode = 6
         versionName = "2.4.0"
