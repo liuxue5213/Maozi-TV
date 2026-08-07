@@ -193,9 +193,17 @@ public final class CategoryHelper {
         return false;
     }
 
+    /**
+     * 检测是否包含中文字符。
+     * 不用 Character.UnicodeScript（在 coreLibraryDesugaring 开启后，
+     * Android 6.0 上会 ClassNotFoundException 崩溃），
+     * 改用简单的 CJK 统一表意文字范围判断。
+     */
     private static boolean containsCjk(String text) {
         for (int i = 0; i < text.length(); i++) {
-            if (Character.UnicodeScript.of(text.charAt(i)) == Character.UnicodeScript.HAN) {
+            char c = text.charAt(i);
+            // CJK Unified Ideographs 基本区 + 扩展A区
+            if ((c >= 0x4E00 && c <= 0x9FFF) || (c >= 0x3400 && c <= 0x4DBF)) {
                 return true;
             }
         }
