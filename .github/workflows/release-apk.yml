@@ -33,15 +33,11 @@ jobs:
             "platforms;android-34" \
             "build-tools;34.0.0" 2>&1 | tail -5
 
-      - name: 缓存 Gradle
-        uses: actions/cache@v4
+      # Gradle 官方缓存：依赖 + Wrapper 一次搞定，命中时不再全量下载
+      - name: 缓存 Gradle 依赖
+        uses: gradle/actions/setup-gradle@v4
         with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('android/**/*.gradle.kts', 'android/**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
+          cache-read-only: false
 
       - name: 生成 Gradle Wrapper（若不存在）
         working-directory: ./android
