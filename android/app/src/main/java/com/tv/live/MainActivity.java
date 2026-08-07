@@ -606,13 +606,13 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void hideSystemUI() {
+        // 不再使用沉浸式全屏（IMMERSIVE_STICKY + LAYOUT_HIDE_NAVIGATION），
+        // 那会让内容延伸到虚拟导航栏下方被遮挡，且碰边缘会弹出按钮覆盖内容。
+        // 改为：保留系统状态栏/导航栏，App 内容在其安全区内显示，
+        // 三个虚拟按钮始终可见可用。
         getWindow().getDecorView().setSystemUiVisibility(
                 View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                        | View.SYSTEM_UI_FLAG_FULLSCREEN
-                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                        | View.SYSTEM_UI_FLAG_VISIBLE
         );
     }
 

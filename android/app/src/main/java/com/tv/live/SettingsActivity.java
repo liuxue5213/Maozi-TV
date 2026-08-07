@@ -66,12 +66,12 @@ public class SettingsActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_settings);
-        // 隐藏系统导航栏（沉浸式）
+        // 不使用沉浸式全屏：保留系统导航栏（三个虚拟按钮）可见可用，
+        // App 内容在其安全区内显示
         getWindow().getDecorView().setSystemUiVisibility(
                 android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                        | android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                        | android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
-                        | android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+                        | android.view.View.SYSTEM_UI_FLAG_VISIBLE);
+
 
         rvCategories = findViewById(R.id.rv_settings_categories);
         rvItems = findViewById(R.id.rv_settings_items);

@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.MaoziTV" parent="Theme.AppCompat.NoActionBar">
-        <item name="android:windowFullscreen">true</item>
+        <!-- 不强制全屏：让系统状态栏/导航栏（三个虚拟按钮）保留可见，
+             App 内容在其安全区内显示，不会被遮挡 -->
+        <item name="android:windowFullscreen">false</item>
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowContentOverlay">@null</item>
         <item name="android:windowBackground">@android:color/black</item>
