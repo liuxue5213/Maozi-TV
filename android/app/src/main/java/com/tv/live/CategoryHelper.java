@@ -14,6 +14,8 @@ public final class CategoryHelper {
     public static final String ALL = "all";
     public static final String FAV = "fav";
     public static final String HISTORY = "history";
+    public static final String LOCAL = "local";
+    public static final String HKTW = "hktw";
 
     public static class Category {
         public final String id;
@@ -154,10 +156,34 @@ public final class CategoryHelper {
     };
 
     private static boolean isLocalProvince(String text) {
+        return extractProvince(text) != null;
+    }
+
+    /**
+     * 从频道名称/分组中提取省份（用于二级分组）。
+     * 返回 null 表示无法识别省份。
+     */
+    public static String extractProvince(String text) {
+        if (text == null) return null;
         for (String p : PROVINCES) {
-            if (text.contains(p)) return true;
+            if (text.contains(p)) return p;
         }
-        return false;
+        return null;
+    }
+
+    /**
+     * 获取频道的二级分组 key（省份维度，仅对地方分类有意义）。
+     * 返回 null 表示无二级分组。
+     */
+    public static String subGroupId(ChannelOptimized ch) {
+        String combined = safe(ch.name) + " " + safe(ch.group);
+        String province = extractProvince(combined);
+        if (province != null) return "province_" + province;
+        // 港澳台二级
+        if (containsAny(combined, "香港", "TVB", "翡翠")) return "region_hk";
+        if (containsAny(combined, "澳门", "澳视")) return "region_mo";
+        if (containsAny(combined, "台湾", "东森", "中天", "三立", "民视", "中视", "台视")) return "region_tw";
+        return null;
     }
 
     private static boolean containsAny(String text, String... keywords) {

@@ -192,6 +192,7 @@ public class MainActivity extends AppCompatActivity {
     // ── 数据 ────────────────────────────────────────────────
     private final List<ChannelOptimized> allChannels = new ArrayList<>();
     private String currentCategoryId = CategoryHelper.ALL;
+    private String currentSubGroup = null; // 二级分组（省份），null=显示全部
     private String searchQuery = "";
     private ChannelOptimized currentChannel;
     private final List<String> playHistory = new ArrayList<>(); // 播放历史（频道 ID，新→旧）
@@ -271,6 +272,14 @@ public class MainActivity extends AppCompatActivity {
 
         // 🔥 全局异常捕获 — 防止未捕获异常直接闪退，记录日志 + 优雅恢复
         setupGlobalExceptionHandler();
+
+        // 返回键：targetSdk 34 必须用 OnBackPressedDispatcher（onKeyDown(BACK) 已失效）
+        getOnBackPressedDispatcher().addCallback(this, new androidx.activity.OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                handleBack();
+            }
+        });
 
         setContentView(R.layout.activity_main);
 
@@ -537,6 +546,13 @@ public class MainActivity extends AppCompatActivity {
         tvSourceInfo = findViewById(R.id.tv_source_info);
         tvEmptyState = findViewById(R.id.tv_empty_state);
         progressChannels = findViewById(R.id.progress_channels);
+
+        // 设置入口按钮（触摸设备/无 MENU 键时点击进入设置中心）
+        android.widget.Button btnSettings = findViewById(R.id.btn_settings);
+        if (btnSettings != null) {
+            btnSettings.setOnClickListener(v ->
+                    startActivityForResult(new Intent(this, SettingsActivity.class), REQ_SETTINGS));
+        }
         tvChannelName = findViewById(R.id.tv_channel_name);
         tvChannelNumSmall = findViewById(R.id.tv_channel_num_small);
         tvChannelGroup = findViewById(R.id.tv_channel_group);
@@ -1025,7 +1041,14 @@ public class MainActivity extends AppCompatActivity {
         categoryAdapter = new CategoryAdapter((item, position) -> {
             Log.d(TAG, "Category clicked: " + item.category.id + " (" + item.category.name + ")");
             currentCategoryId = item.category.id;
-            refreshChannelGrid();
+            // 二级分组：地方/港澳台分类弹出省份选择
+            if (CategoryHelper.LOCAL.equals(item.category.id)
+                    || CategoryHelper.HKTW.equals(item.category.id)) {
+                showSubGroupDialog(item.category.id);
+            } else {
+                currentSubGroup = null;
+                refreshChannelGrid();
+            }
             recordUserInteraction();
         });
         rvCategories.setLayoutManager(new LinearLayoutManager(this));
@@ -1040,8 +1063,12 @@ public class MainActivity extends AppCompatActivity {
         channelAdapter = new ChannelAdapter(new ChannelAdapter.OnChannelClickListener() {
             @Override
             public void onChannelClick(ChannelOptimized channel, int position) {
+                // 点击立即视觉反馈：卡片变"播放中"，再延迟关面板
+                channelAdapter.setSelectedChannelId(channel.id);
                 playChannel(channel);
-                hideChannelPanel();
+                // 延迟 250ms 关面板，让用户看到选中反馈
+                new Handler(Looper.getMainLooper()).postDelayed(
+                        MainActivity.this::hideChannelPanel, 250);
             }
 
             @Override
@@ -1140,6 +1167,53 @@ public class MainActivity extends AppCompatActivity {
     private void toggleChannelPanel() {
         if (panelVisible) hideChannelPanel();
         else showChannelPanel();
+    }
+
+    /**
+     * 二级分组选择对话框（地方→省份，港澳台→地区）。
+     * 选定后过滤到该二级分组的频道。
+     */
+    private void showSubGroupDialog(String categoryId) {
+        // 收集该分类下所有频道的二级分组
+        List<ChannelOptimized> filtered = CategoryHelper.filter(
+                filterHiddenGroups(allChannels), categoryId, false, cachedBuckets);
+        java.util.LinkedHashMap<String, String> subGroups = new java.util.LinkedHashMap<>();
+        String allLabel = "全部" + (CategoryHelper.LOCAL.equals(categoryId) ? "地方" : "港澳台");
+        subGroups.put("__all__", allLabel);
+        for (ChannelOptimized ch : filtered) {
+            String subId = CategoryHelper.subGroupId(ch);
+            String subName;
+            if (subId == null) {
+                subId = "__other__";
+                subName = "其他";
+            } else if (subId.startsWith("province_")) {
+                subName = subId.substring("province_".length());
+            } else if (subId.startsWith("region_hk")) {
+                subName = "香港";
+            } else if (subId.startsWith("region_mo")) {
+                subName = "澳门";
+            } else if (subId.startsWith("region_tw")) {
+                subName = "台湾";
+            } else {
+                subName = "其他";
+            }
+            if (!subGroups.containsKey(subId)) {
+                subGroups.put(subId, subName);
+            }
+        }
+
+        String[] labels = subGroups.values().toArray(new String[0]);
+        String[] ids = subGroups.keySet().toArray(new String[0]);
+
+        new AlertDialog.Builder(this)
+                .setTitle("选择" + (CategoryHelper.LOCAL.equals(categoryId) ? "省份" : "地区"))
+                .setItems(labels, (dialog, which) -> {
+                    String subId = ids[which];
+                    currentSubGroup = "__all__".equals(subId) ? null : subId;
+                    refreshChannelGrid();
+                })
+                .setNegativeButton("取消", null)
+                .show();
     }
 
     // ══════════════════════════════════════════════════════════
@@ -1392,6 +1466,17 @@ public class MainActivity extends AppCompatActivity {
         }
         // 用户偏好：过滤掉隐藏分组中的频道
         filtered = filterHiddenGroups(filtered);
+
+        // 二级分组过滤（省份/地区）
+        if (currentSubGroup != null) {
+            List<ChannelOptimized> subFiltered = new ArrayList<>();
+            for (ChannelOptimized ch : filtered) {
+                String subId = CategoryHelper.subGroupId(ch);
+                if (subId == null) subId = "__other__";
+                if (currentSubGroup.equals(subId)) subFiltered.add(ch);
+            }
+            filtered = subFiltered;
+        }
 
         filtered = CategoryHelper.search(filtered, searchQuery);
         channelAdapter.setChannels(filtered);
@@ -2547,6 +2632,32 @@ public class MainActivity extends AppCompatActivity {
         playerView.setFocusable(true);
     }
 
+    /**
+     * 统一的返回处理（OnBackPressedDispatcher 与 onKeyDown(BACK) 共用）。
+     * 优先级：多画面 → 选台面板 → 频道号输入 → 退出确认。
+     */
+    private void handleBack() {
+        // 1. 多画面模式：先退出多画面
+        if (multiviewActive) {
+            exitMultiview();
+            return;
+        }
+        // 2. 选台面板打开：关闭面板
+        if (panelVisible) {
+            hideChannelPanel();
+            return;
+        }
+        // 3. 频道号输入中：取消
+        if (channelNumberBuffer.length() > 0) {
+            channelNumberBuffer.setLength(0);
+            tvChannelNumber.setVisibility(View.GONE);
+            channelNumberHandler.removeCallbacksAndMessages(null);
+            return;
+        }
+        // 4. 默认：退出 App
+        finish();
+    }
+
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         // 选台面板打开时：交给 RecyclerView 自身的焦点导航（上下/左右移动），
@@ -2564,7 +2675,7 @@ public class MainActivity extends AppCompatActivity {
                     }
                     return true;
                 case KeyEvent.KEYCODE_BACK:
-                    hideChannelPanel();
+                    handleBack();
                     return true;
                 // 面板内方向键：透传到系统，让 RecyclerView 做焦点移动
                 case KeyEvent.KEYCODE_DPAD_UP:
@@ -2637,9 +2748,10 @@ public class MainActivity extends AppCompatActivity {
                 showQualityDialog();
                 return true;
 
-            // BACK 键：长按退出（短按交给系统默认退出行为）
+            // BACK 键：交给 OnBackPressedDispatcher 统一处理
             case KeyEvent.KEYCODE_BACK:
-                break;
+                handleBack();
+                return true;
         }
 
         return super.onKeyDown(keyCode, event);

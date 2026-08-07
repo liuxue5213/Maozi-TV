@@ -1,9 +1,9 @@
 {
-  "versionCode": 5,
-  "versionName": "2.3.0",
-  "releaseNotes": "多源聚合 + 电视端设置中心 + 分组隐藏偏好 + 埋点云同步 + 性能优化 + 实时网速",
+  "versionCode": 6,
+  "versionName": "2.4.0",
+  "releaseNotes": "修复返回键失效 + 小米盒子兼容(API19) + 触屏设置入口 + 二级分组(省份) + 点击响应优化",
   "apkUrl": "https://github.com/liuxue5213/Maozi-TV/releases/latest/download/MaoziTV.apk",
-  "apkUrlMirror": "https://gitee.com/liuxue5213/maozi-tv/releases/download/v2.3.0/MaoziTV.apk",
+  "apkUrlMirror": "https://gitee.com/liuxue5213/maozi-tv/releases/download/v2.4.0/MaoziTV.apk",
   "minSupportVersionCode": 1,
-  "updateTime": "2026-08-06"
+  "updateTime": "2026-08-07"
 }

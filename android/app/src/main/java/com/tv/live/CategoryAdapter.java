@@ -106,10 +106,14 @@ public class CategoryAdapter extends RecyclerView.Adapter<CategoryAdapter.ViewHo
         holder.itemView.setOnFocusChangeListener((v, hasFocus) -> {
             if (hasFocus) {
                 v.animate().scaleX(1.08f).scaleY(1.08f).setDuration(150).start();
-                v.setElevation(6f);
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                    v.setElevation(6f);
+                }
             } else {
                 v.animate().scaleX(1f).scaleY(1f).setDuration(150).start();
-                v.setElevation(0f);
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                    v.setElevation(0f);
+                }
             }
         });
 

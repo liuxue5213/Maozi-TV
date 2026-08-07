@@ -8,10 +8,15 @@ android {
 
     defaultConfig {
         applicationId = "com.tv.live"
-        minSdk = 21
-        targetSdk = 34
-        versionCode = 5
-        versionName = "2.3.0"
+        minSdk = 19                      // 兼容小米盒子（Android 4.4）
+        targetSdk = 30                   // 降到 30：避免 34 的严格返回键/前台权限问题
+        versionCode = 6
+        versionName = "2.4.0"
+
+        // 只打包 arm 架构，缩小 APK 体积，覆盖小米盒子
+        ndk {
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a")
+        }
     }
 
     signingConfigs {

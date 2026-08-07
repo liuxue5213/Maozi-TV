@@ -331,6 +331,22 @@
                     android:textColor="#4A9EFF"
                     android:textSize="12sp"
                     android:text="📡 加载中..." />
+
+                <!-- 设置入口按钮（触摸/无 MENU 键设备可用） -->
+                <android.widget.Button
+                    android:id="@+id/btn_settings"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:layout_marginStart="12dp"
+                    android:minWidth="0dp"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:text="⚙️ 设置"
+                    android:textColor="#FFFFFF"
+                    android:textSize="13sp"
+                    android:background="@drawable/bg_search_input"
+                    android:focusable="true"
+                    android:clickable="true" />
             </LinearLayout>
 
             <!-- 主体：分类 + 网格 -->

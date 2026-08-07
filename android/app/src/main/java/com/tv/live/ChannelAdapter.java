@@ -208,8 +208,10 @@ public class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.ViewHold
         }
 
         String meta = ch.group != null ? ch.group : "";
-        if (ch.sources.size() > 1) {
-            meta = meta.isEmpty() ? (ch.sources.size() + " 源") : meta + " · " + ch.sources.size() + "源";
+        // 源数：>0 都显示（单源也显示"1源"，让用户知道源数量）
+        if (ch.sources != null && !ch.sources.isEmpty()) {
+            String srcTag = ch.sources.size() + " 源";
+            meta = meta.isEmpty() ? srcTag : meta + " · " + srcTag;
         }
         holder.tvMeta.setText(meta);
 
@@ -266,7 +268,9 @@ public class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.ViewHold
                 scale.setFillAfter(true);
                 v.startAnimation(scale);
                 holder.cardRoot.setBackgroundResource(R.drawable.bg_channel_card_focused);
-                v.setElevation(8f);
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                    v.setElevation(8f);
+                }
             } else {
                 ScaleAnimation scale = new ScaleAnimation(1.06f, 1f, 1.06f, 1f,
                         Animation.RELATIVE_TO_SELF, 0.5f, Animation.RELATIVE_TO_SELF, 0.5f);
@@ -274,7 +278,9 @@ public class ChannelAdapter extends RecyclerView.Adapter<ChannelAdapter.ViewHold
                 scale.setFillAfter(true);
                 v.startAnimation(scale);
                 holder.cardRoot.setBackgroundResource(R.drawable.bg_channel_card);
-                v.setElevation(0f);
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                    v.setElevation(0f);
+                }
             }
         });
     }
