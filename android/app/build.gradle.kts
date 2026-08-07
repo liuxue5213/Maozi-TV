@@ -46,6 +46,9 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // 开启核心库 desugaring：让 Java 8+ API（如 java.util.function.Consumer）
+        // 在低版本 Android（minSdk 21）上可用，避免 NoClassDefFoundError 启动崩溃
+        isCoreLibraryDesugaringEnabled = true
     }
 }
 
@@ -74,4 +77,7 @@ dependencies {
 
     // WorkManager — 后台周期检查频道源更新
     implementation("androidx.work:work-runtime:2.9.0")
+
+    // 核心库 desugaring（让 Java 8+ API 在 minSdk 21 可用）
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
 }
