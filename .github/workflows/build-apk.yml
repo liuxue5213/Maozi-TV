@@ -62,4 +62,5 @@ jobs:
           name: MaoziTV-Debug-APK
           path: android/app/build/outputs/apk/debug/MaoziTV-debug.apk
           if-no-files-found: error
-          retention-days: 30
+          # 产物只保留 7 天，避免多次构建累积占满 Artifact 存储（500MB 额度）
+          retention-days: 7
