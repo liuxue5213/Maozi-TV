@@ -2,8 +2,8 @@ name: Export channels.json
 
 on:
   schedule:
-    # 每 4 小时自动更新一次（源失效快，缩短周期让失效源更快被检测剔除替换）
-    - cron: "0 */4 * * *"
+    # 每 24 小时自动更新一次（每天 0 点 UTC）
+    - cron: "0 0 * * *"
   workflow_dispatch:  # 手动触发
 
 permissions:
@@ -99,3 +99,34 @@ jobs:
           fi
 
           echo "🔗 Raw URL: https://gitee.com/liuxue5213/maozi-tv/raw/master/channels.json"
+
+  # 清理旧的 workflow runs，只保留最近 3 次，避免 Actions 列表堆积
+  cleanup:
+    runs-on: ubuntu-latest
+    if: always()
+    permissions:
+      actions: write
+    steps:
+      - name: 清理旧 runs（保留最近 3 次）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 列出本 workflow 的所有 run id，跳过最近 3 个，删除其余
+          OLD_IDS=$(gh run list \
+              --workflow=export-channels.yml \
+              --limit 100 \
+              --json databaseId \
+            | python3 -c "
+          import json, sys
+          runs = json.load(sys.stdin)
+          old = [str(r['databaseId']) for r in runs[3:]]
+          print(' '.join(old))
+          ")
+          if [ -n "$OLD_IDS" ]; then
+            for id in $OLD_IDS; do
+              gh run delete "$id" 2>/dev/null && echo "已删除旧 run: $id" || true
+            done
+            echo "✅ 已清理旧 runs，保留最近 3 次"
+          else
+            echo "✓ 无需清理（不足 3 次运行）"
+          fi
