@@ -15,6 +15,7 @@ import android.util.Log;
 import android.util.Rational;
 import android.view.KeyEvent;
 import android.view.View;
+import android.view.WindowManager;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.widget.EditText;
@@ -282,6 +283,9 @@ public class MainActivity extends AppCompatActivity {
         });
 
         setContentView(R.layout.activity_main);
+
+        // 保持屏幕常亮：防止手机按系统"屏幕超时"自动锁屏（TV 盒子本就不会锁屏，手机端才需要）
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
         audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
 
