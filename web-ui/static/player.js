@@ -509,6 +509,7 @@ const dom = {
     playerControls: $('#player-controls'),
     controlsChannelName: $('#controls-channel-name'),
     controlsGroupName: $('#controls-group-name'),
+    controlsEpg: $('#controls-epg'),
     controlsSpeed: $('#controls-speed'),
     btnPrevCh: $('#btn-prev-ch'),
     btnNextCh: $('#btn-next-ch'),
@@ -1625,9 +1626,28 @@ function updateNowPlaying(ch) {
 function updateControlsInfo(ch) {
     if (dom.controlsChannelName) dom.controlsChannelName.textContent = ch.name || '未选择';
     if (dom.controlsGroupName) dom.controlsGroupName.textContent = ch.group || '';
+    // 更新 EPG 节目标题
+    updateEpgDisplay(ch);
     // 更新播放/暂停按钮
     if (dom.btnPlayPause) {
         dom.btnPlayPause.textContent = (state.isPlaying && !state.videoEl.paused) ? '⏸' : '▶';
+    }
+}
+
+/** 更新 EPG 节目信息显示 */
+function updateEpgDisplay(ch) {
+    if (!dom.controlsEpg) return;
+    if (!ch || !ch.name) { dom.controlsEpg.textContent = ''; return; }
+    // 触发 EPG 拉取
+    fetchEpg(ch.name);
+    // 显示已缓存的 EPG 数据
+    if (state.currentEpg && state.currentEpg.programs && state.currentEpg.programs.length > 0) {
+        const prog = state.currentEpg.programs[0];
+        dom.controlsEpg.textContent = '📋 ' + (prog.start ? prog.start + ' ' : '') + prog.title;
+        dom.controlsEpg.style.display = '';
+    } else {
+        dom.controlsEpg.textContent = '';
+        dom.controlsEpg.style.display = 'none';
     }
 }
 

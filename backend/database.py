@@ -35,6 +35,8 @@ class Channel(Base):
     group_name = Column(String(64), default="未分类")
     # Logo URL
     logo = Column(String(512), default="")
+    # EPG identifier (tvg-id) for program guide lookup
+    epg = Column(String(128), default="")
     # JSON list of source URLs, ordered by preference
     sources = Column(Text, default="[]")
     # JSON list of dead source URLs (temporarily excluded from health checks)
@@ -105,6 +107,7 @@ class Channel(Base):
             "last_response_time": self.last_response_time,
             "visible": self.visible,
             "region": detect_region(self.group_name, self.name),
+            "epg": self.epg,
         }
 
 

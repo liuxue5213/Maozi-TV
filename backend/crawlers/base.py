@@ -12,6 +12,7 @@ class ChannelEntry:
     group: str = "未分类"
     logo: str = ""
     source: str = ""  # Which source/crawler it came from
+    epg_id: str = ""  # EPG identifier (from tvg-id attribute) for program guide lookup
 
 
 class BaseCrawler:

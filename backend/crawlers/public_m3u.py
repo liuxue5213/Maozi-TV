@@ -131,11 +131,11 @@ def _normalize_group(group_name: str) -> str:
     return g
 
 
-# Pattern for EXTINF line: #EXTINF:-1 tvg-name="xxx" tvg-logo="xxx" group-title="xxx",Channel Name
+# Pattern for EXTINF line: #EXTINF:-1 tvg-name="xxx" tvg-id="xxx" tvg-logo="xxx" group-title="xxx",Channel Name
 EXTINF_PATTERN = re.compile(
     r'#EXTINF:[-.\d]+\s*'
     r'(?:tvg-name="(?P<tvg_name>[^"]*)")?\s*'
-    r'(?:tvg-id="[^"]*")?\s*'
+    r'(?:tvg-id="(?P<tvg_id>[^"]*)")?\s*'
     r'(?:tvg-logo="(?P<tvg_logo>[^"]*)")?\s*'
     r'(?:group-title="(?P<group_title>[^"]*)")?\s*'
     r'(?:channel-id="[^"]*")?\s*'
@@ -164,12 +164,14 @@ def parse_m3u(content: str, source: str = "") -> List[ChannelEntry]:
         if line.startswith("#EXTINF"):
             channel_name = ""
             tvg_logo = ""
+            tvg_id = ""
             group_title = "未分类"
 
             m = EXTINF_PATTERN.match(line)
             if m:
                 channel_name = (m.group("tvg_name") or m.group("channel_name") or "").strip()
                 tvg_logo = (m.group("tvg_logo") or "").strip()
+                tvg_id = (m.group("tvg_id") or "").strip()
                 group_title = _normalize_group((m.group("group_title") or "未分类").strip())
             else:
                 # Fallback: take everything after the last comma
@@ -198,6 +200,7 @@ def parse_m3u(content: str, source: str = "") -> List[ChannelEntry]:
                             group=group_title,
                             logo=tvg_logo,
                             source=source,
+                            epg_id=tvg_id,
                         ))
             i += 1
 

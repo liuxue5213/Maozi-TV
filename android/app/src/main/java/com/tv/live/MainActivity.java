@@ -342,6 +342,9 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
+        // 首次启动引导：检测是否从未配置过（默认 server_url + 无缓存数据）
+        checkFirstLaunchGuide();
+
         // 埋点：启动事件
         CloudSync.track(this, "app_start", null, "", "");
 
@@ -410,6 +413,10 @@ public class MainActivity extends AppCompatActivity {
             }
             // 应用画质限制（可能已修改）
             applyQualityPreference(prefs.getInt("quality_max_height", -1));
+            // 刷新信号源信息显示（遵守 show_source_info 设置）
+            updateSourceInfoDisplay();
+            // 刷新频道列表（遵守 healthy_only 等设置）
+            refreshChannelGrid();
             // 设置页触发了「更新频道源」
             if (resultCode == 1001) {
                 refreshChannels();
@@ -660,9 +667,18 @@ public class MainActivity extends AppCompatActivity {
             DefaultMediaSourceFactory mediaSourceFactory = new DefaultMediaSourceFactory(this)
                     .setDataSourceFactory(httpFactory);
 
-            // 优化缓冲策略以减少内存使用：更小的最大缓冲和初始缓冲
+            // 缓冲策略：根据设置中的「缓冲模式」动态调整
+            // 低延迟(5s/15s) / 标准(10s/30s) / 高稳定(20s/60s)
+            SharedPreferences bufPrefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+            String bufferMode = bufPrefs.getString("buffer_mode", "standard");
+            int minBuff, maxBuff;
+            switch (bufferMode) {
+                case "low_latency": minBuff = 5000; maxBuff = 15000; break;
+                case "high_stability": minBuff = 20000; maxBuff = 60000; break;
+                default: minBuff = 10000; maxBuff = 30000; break;
+            }
             DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
-                    .setBufferDurationsMs(10000, 30000, 1500, 2000)
+                    .setBufferDurationsMs(minBuff, maxBuff, 1500, 2000)
                     .build();
 
             ExoPlayer.Builder playerBuilder = new ExoPlayer.Builder(this)
@@ -728,6 +744,14 @@ public class MainActivity extends AppCompatActivity {
      */
     private void handlePlaybackError() {
         if (currentChannel == null) {
+            showStatus("播放失败");
+            return;
+        }
+
+        // 检查是否启用自动切源
+        boolean autoSwitch = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getBoolean("auto_switch_source", true);
+        if (!autoSwitch) {
             showStatus("播放失败");
             return;
         }
@@ -800,6 +824,9 @@ public class MainActivity extends AppCompatActivity {
 
         // 立即显示频道信息叠加层（不自动隐藏，由播放状态控制）
         showChannelInfo(channel, false);
+
+        // 异步拉取 EPG 节目单并显示在叠加层
+        fetchAndShowEpgOverlay(channel);
 
         // 更新选中状态
         channelAdapter.setSelectedChannelId(channel.id);
@@ -942,7 +969,7 @@ public class MainActivity extends AppCompatActivity {
             tvChannelNumSmall.setText("CH" + channel.channelNumber);
             tvChannelNumSmall.setVisibility(View.VISIBLE);
         }
-        // EPG 当前节目（预留）
+        // EPG 当前节目：预留位置，由 fetchAndShowEpgOverlay 异步填充
         if (tvEpgNow != null) tvEpgNow.setVisibility(View.GONE);
         channelInfoOverlay.setVisibility(View.VISIBLE);
 
@@ -989,24 +1016,37 @@ public class MainActivity extends AppCompatActivity {
             public void run() {
                 if (player != null && (player.getPlaybackState() == Player.STATE_READY
                         || player.getPlaybackState() == Player.STATE_BUFFERING)) {
+                    // 读取显示偏好设置
+                    SharedPreferences dispPrefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+                    boolean showBitrate = dispPrefs.getBoolean("show_bitrate", true);
+                    boolean showSignal = dispPrefs.getBoolean("show_signal", true);
+
                     // 实时网速：用 SpeedMeter 统计的实际下载字节（每秒采样+3秒平滑）
                     long realtimeBps = speedMeter.tick();
                     tvSpeed.setText(formatSpeed(realtimeBps));
                     // 更新信号强度：用带宽估算（供信号分级参考）
                     long bitrate = bandwidthMeter.getBitrateEstimate();
-                    updateSignalBars(bitrate / 1000);
-                    // 更新分辨率信息
-                    if (tvResolution != null && player.getVideoFormat() != null) {
-                        com.google.android.exoplayer2.Format fmt = player.getVideoFormat();
-                        if (fmt.width > 0 && fmt.height > 0) {
-                            tvResolution.setText(fmt.width + "x" + fmt.height);
-                            tvResolution.setVisibility(View.VISIBLE);
-                        }
+                    if (showSignal) {
+                        updateSignalBars(bitrate / 1000);
+                    } else if (tvSignalText != null) {
+                        tvSignalText.setVisibility(View.GONE);
                     }
-                    // 更新码率
-                    if (tvBitrate != null && bitrate > 0) {
-                        tvBitrate.setText(formatBitrate(bitrate));
-                        tvBitrate.setVisibility(View.VISIBLE);
+                    // 更新分辨率/码率信息（遵守设置开关）
+                    if (showBitrate) {
+                        if (tvResolution != null && player.getVideoFormat() != null) {
+                            com.google.android.exoplayer2.Format fmt = player.getVideoFormat();
+                            if (fmt.width > 0 && fmt.height > 0) {
+                                tvResolution.setText(fmt.width + "x" + fmt.height);
+                                tvResolution.setVisibility(View.VISIBLE);
+                            }
+                        }
+                        if (tvBitrate != null && bitrate > 0) {
+                            tvBitrate.setText(formatBitrate(bitrate));
+                            tvBitrate.setVisibility(View.VISIBLE);
+                        }
+                    } else {
+                        if (tvResolution != null) tvResolution.setVisibility(View.GONE);
+                        if (tvBitrate != null) tvBitrate.setVisibility(View.GONE);
                     }
                 }
                 speedHandler.postDelayed(this, SPEED_REFRESH_INTERVAL);
@@ -1098,6 +1138,10 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private int getGridSpanCount() {
+        // 优先读取用户设置的网格列数（-1 = 自动）
+        int customCols = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getInt("grid_columns", -1);
+        if (customCols >= 2 && customCols <= 5) return customCols;
         int widthDp = getResources().getConfiguration().screenWidthDp;
         if (widthDp >= 960) return 5;
         if (widthDp >= 720) return 4;
@@ -1366,25 +1410,42 @@ public class MainActivity extends AppCompatActivity {
             SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
             ChannelOptimized startChannel = null;
 
-            // 根据「启动进入频道」设置决定播放哪个频道
-            boolean startLast = prefs.getBoolean("start_last_channel", true);
-            if (startLast) {
-                int lastId = prefs.getInt(KEY_LAST_CHANNEL, -1);
-                if (lastId >= 0) {
-                    for (ChannelOptimized ch : allChannels) {
-                        // 跳过隐藏分组中的频道
-                        if (ch.id == lastId && !isGroupHidden(ch.group)) {
-                            startChannel = ch;
-                            break;
+            // 根据「启动页面」设置决定进入哪个页面
+            String startupPage = prefs.getString("startup_page", "all");
+            switch (startupPage) {
+                case "favorites":
+                    // 进入收藏分类
+                    currentCategoryId = CategoryHelper.FAV;
+                    refreshChannelGrid();
+                    showChannelPanel();
+                    break;
+                case "hot":
+                    // 热门频道：按播放历史排序显示全部
+                    currentCategoryId = CategoryHelper.ALL;
+                    refreshChannelGrid();
+                    showChannelPanel();
+                    break;
+                case "last":
+                default:
+                    // 播放上次频道（兼容旧设置 start_last_channel）
+                    boolean startLast = prefs.getBoolean("start_last_channel", true);
+                    if (startLast) {
+                        int lastId = prefs.getInt(KEY_LAST_CHANNEL, -1);
+                        if (lastId >= 0) {
+                            for (ChannelOptimized ch : allChannels) {
+                                if (ch.id == lastId && !isGroupHidden(ch.group)) {
+                                    startChannel = ch;
+                                    break;
+                                }
+                            }
                         }
                     }
-                }
-            }
-
-            if (startChannel != null) {
-                playChannel(startChannel);
-            } else {
-                showChannelPanel();
+                    if (startChannel != null) {
+                        playChannel(startChannel);
+                    } else {
+                        showChannelPanel();
+                    }
+                    break;
             }
         }
     }
@@ -1470,6 +1531,15 @@ public class MainActivity extends AppCompatActivity {
         }
         // 用户偏好：过滤掉隐藏分组中的频道
         filtered = filterHiddenGroups(filtered);
+
+        // 「仅显示健康频道」设置过滤
+        if (getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean("healthy_only", false)) {
+            List<ChannelOptimized> healthyList = new ArrayList<>();
+            for (ChannelOptimized ch : filtered) {
+                if (ch.healthy) healthyList.add(ch);
+            }
+            filtered = healthyList;
+        }
 
         // 二级分组过滤（省份/地区）
         if (currentSubGroup != null) {
@@ -2102,6 +2172,75 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ══════════════════════════════════════════════════════════
+    // 首次启动引导（零配置体验）
+    // ══════════════════════════════════════════════════════════
+
+    /**
+     * 检测首次启动：如果 server_url 是默认值且无缓存频道数据，
+     * 弹出引导对话框，让用户选择「快速开始」或「配置服务器」。
+     */
+    private void checkFirstLaunchGuide() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        String serverUrl = prefs.getString(KEY_SERVER_URL, DEFAULT_SERVER_URL);
+        String cachedJson = prefs.getString(KEY_CACHED_JSON, "");
+        boolean hasShownGuide = prefs.getBoolean("first_launch_guide_shown", false);
+
+        // 已显示过引导 或 已配置了非默认服务器 或 已有缓存数据 → 跳过
+        if (hasShownGuide) return;
+        if (!serverUrl.equals(DEFAULT_SERVER_URL)) return;
+        if (cachedJson != null && !cachedJson.isEmpty()) return;
+
+        // 标记已显示（避免重复弹出）
+        prefs.edit().putBoolean("first_launch_guide_shown", true).apply();
+
+        // 延迟弹出，等界面稳定
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            if (isFinishing() || isDestroyed()) return;
+            new AlertDialog.Builder(this)
+                    .setTitle("👋 欢迎使用帽子TV")
+                    .setMessage("您希望如何开始使用？\n\n"
+                            + "• 快速开始：直接使用托管频道源，无需自建服务器\n"
+                            + "• 配置服务器：输入自建后端地址（高级用户）")
+                    .setPositiveButton("快速开始", (d, w) -> {
+                        // 使用默认托管源，无需额外配置
+                        Toast.makeText(this, "已启用托管频道源", Toast.LENGTH_SHORT).show();
+                    })
+                    .setNegativeButton("配置服务器", (d, w) -> {
+                        showFirstLaunchServerInput();
+                    })
+                    .setCancelable(true)
+                    .show();
+        }, 2000);
+    }
+
+    /** 首次启动时的服务器地址输入框 */
+    private void showFirstLaunchServerInput() {
+        EditText input = new EditText(this);
+        input.setHint("192.168.1.100:8000");
+        input.setTextColor(0xFFFFFFFF);
+        input.setHintTextColor(0x88FFFFFF);
+        input.setSingleLine(true);
+
+        new AlertDialog.Builder(this)
+                .setTitle("配置服务器地址")
+                .setMessage("输入后端服务器的 IP:端口\n（如 192.168.1.100:8000）")
+                .setView(input)
+                .setPositiveButton("确定", (d, w) -> {
+                    String url = input.getText().toString().trim();
+                    if (!url.isEmpty()) {
+                        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+                            url = "http://" + url;
+                        }
+                        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                                .edit().putString(KEY_SERVER_URL, url).apply();
+                        Toast.makeText(this, "服务器: " + url, Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    // ══════════════════════════════════════════════════════════
     // EPG 节目单
     // ══════════════════════════════════════════════════════════
 
@@ -2152,11 +2291,11 @@ public class MainActivity extends AppCompatActivity {
     private List<String[]> fetchEpgPrograms(ChannelOptimized channel) {
         List<String[]> result = new ArrayList<>();
 
-        // 尝试后端 EPG API
+        // 尝试后端 EPG API（参数名 name，与后端 /api/epg?name=xxx 一致）
         try {
             String server = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                     .getString(KEY_SERVER_URL, DEFAULT_SERVER_URL);
-            String api = server + "/api/epg?channel="
+            String api = server + "/api/epg?name="
                     + java.net.URLEncoder.encode(channel.name, "UTF-8");
 
             HttpURLConnection conn = (HttpURLConnection) new URL(api).openConnection();
@@ -2177,12 +2316,12 @@ public class MainActivity extends AppCompatActivity {
                 if (arr != null && arr.length() > 0) {
                     for (int i = 0; i < arr.length(); i++) {
                         JSONObject p = arr.getJSONObject(i);
-                        result.add(new String[]{
-                                p.optString("start", "").replace("T", " ").substring(0, 16),
-                                p.optString("title", "未知节目")
-                        });
+                        // 后端返回格式: {"start": "08:00", "end": "08:30", "title": "..."}
+                        String start = p.optString("start", "--");
+                        String title = p.optString("title", "未知节目");
+                        result.add(new String[]{start, title});
                     }
-                    return result; // 后端有数据直接返回
+                    return result;
                 }
             }
             conn.disconnect();
@@ -2191,10 +2330,33 @@ public class MainActivity extends AppCompatActivity {
         }
 
         // 后端不可用 → 返回占位提示
-        result.add(new String[]{"--", "EPG 数据源未配置"});
-        result.add(new String[]{"--", "可在设置中配置后端服务器地址"});
-        result.add(new String[]{"--", "或等待后端 EPG 服务部署"});
+        result.add(new String[]{"--", "暂无节目信息"});
         return result;
+    }
+
+    /**
+     * 自动拉取 EPG 并显示在频道信息叠加层（tvEpgNow）。
+     * 仅在设置中开启 EPG 显示时调用。
+     */
+    private void fetchAndShowEpgOverlay(ChannelOptimized channel) {
+        if (tvEpgNow == null) return;
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        if (!prefs.getBoolean("show_epg", true)) {
+            tvEpgNow.setVisibility(View.GONE);
+            return;
+        }
+        tvEpgNow.setVisibility(View.GONE); // 先隐藏，拉到数据再显示
+        executor.execute(() -> {
+            List<String[]> programs = fetchEpgPrograms(channel);
+            mainHandler.post(() -> {
+                if (programs.isEmpty() || currentChannel != channel) return;
+                String title = programs.get(0)[1];
+                if (!title.isEmpty() && !title.equals("暂无节目信息")) {
+                    tvEpgNow.setText("📋 " + title);
+                    tvEpgNow.setVisibility(View.VISIBLE);
+                }
+            });
+        });
     }
 
     // ══════════════════════════════════════════════════════════
@@ -2929,7 +3091,13 @@ public class MainActivity extends AppCompatActivity {
     private void updateSourceInfoDisplay() {
         if (tvSourceInfo == null) return;
 
+        // 遵守「频道源信息」设置开关
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        if (!prefs.getBoolean("show_source_info", true)) {
+            tvSourceInfo.setVisibility(View.GONE);
+            return;
+        }
+        tvSourceInfo.setVisibility(View.VISIBLE);
         String infoStr = prefs.getString(KEY_SOURCE_INFO, null);
 
         String display;

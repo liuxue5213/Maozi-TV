@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from ..database import Channel, SessionLocal, SourceCheckLog
 from ..source_manager import SourceManager
 from ..exporter import export_channels, detect_region
+from ..epg import get_epg
 
 logger = logging.getLogger(__name__)
 
@@ -241,6 +242,17 @@ def get_summary():
         )
     finally:
         db.close()
+
+
+@router.get("/epg")
+def get_epg_programs(name: str = Query(..., description="Channel name to lookup EPG for")):
+    """Get EPG (program guide) for a channel by name.
+
+    Returns current and upcoming programs. Data is cached for 30 minutes.
+    If no EPG data is available for the channel, returns a placeholder entry.
+    """
+    result = get_epg(name)
+    return result
 
 
 @router.get("/export")

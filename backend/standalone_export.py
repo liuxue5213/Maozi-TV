@@ -129,6 +129,7 @@ def build_channel_list(entries: List[ChannelEntry]) -> List[Dict[str, Any]]:
             "sources": urls,
             "healthy": True,  # 将由 health_check_channels() 真实验证
             "region": detect_region(primary.group or "未分类", display),
+            "epg": primary.epg_id or "",
         })
 
     # 过滤掉所有国外频道（只保留国内+港澳台），国内优先排序

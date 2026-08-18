@@ -470,6 +470,16 @@ html, body {
     border-radius: 10px;
 }
 
+.controls-epg {
+    font-size: 12px;
+    color: #FFD700;
+    margin-left: 10px;
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .controls-right {
     display: flex;
     align-items: center;

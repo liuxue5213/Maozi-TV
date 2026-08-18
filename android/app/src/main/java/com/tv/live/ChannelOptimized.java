@@ -26,6 +26,7 @@ public class ChannelOptimized {
     public List<String> sources;
     public boolean healthy;
     public String region;
+    public String epg;  // EPG identifier for program guide
 
     // 运行时状态
     public int currentSourceIndex = 0;
@@ -61,6 +62,7 @@ public class ChannelOptimized {
         ch.url = obj.optString("url", "");
         ch.healthy = obj.optBoolean("healthy", true);
         ch.region = obj.optString("region", "domestic");
+        ch.epg = obj.optString("epg", "");
 
         // 解析源列表
         JSONArray srcArr = obj.optJSONArray("sources");

@@ -35,24 +35,44 @@ public class SettingsActivity extends AppCompatActivity {
     private static final String CAT_PLAY = "play";
     private static final String CAT_BOOT = "boot";
     private static final String CAT_CONTENT = "content";
+    private static final String CAT_UI = "ui";
     private static final String CAT_ABOUT = "about";
 
-    // 设置项 key
+    // 播放类设置项 key
     private static final String KEY_DECODER = "key_decoder";
     private static final String KEY_RESIZE = "key_resize";
     private static final String KEY_SPEED = "key_speed";
     private static final String KEY_QUALITY = "key_quality";
     private static final String KEY_MULTIVIEW = "key_multiview";
+    private static final String KEY_THEME = "key_theme";
+    private static final String KEY_SHOW_EPG = "key_show_epg";
+    private static final String KEY_SOURCE_STRATEGY = "key_source_strategy";
+    private static final String KEY_BUFFER_MODE = "key_buffer_mode";
+    private static final String KEY_AUTO_SWITCH = "key_auto_switch";
+
+    // 启动类设置项 key
     private static final String KEY_BOOT_LAUNCH = "key_boot_launch";
+    private static final String KEY_START_CHANNEL = "key_start_channel";
+    private static final String KEY_STARTUP_PAGE = "key_startup_page";
     private static final String KEY_PARENTAL = "key_parental";
     private static final String KEY_SLEEP_TIMER = "key_sleep_timer";
-    private static final String KEY_REFRESH_SOURCE = "key_refresh_source";
+
+    // 内容类设置项 key
     private static final String KEY_CHECK_UPDATE = "key_check_update";
+    private static final String KEY_REFRESH_SOURCE = "key_refresh_source";
+    private static final String KEY_GROUP_DISPLAY = "key_group_display";
     private static final String KEY_CUSTOM_SOURCE = "key_custom_source";
     private static final String KEY_SERVER_URL = "key_server_url";
-    private static final String KEY_GROUP_DISPLAY = "key_group_display";
-    private static final String KEY_THEME = "key_theme";
-    private static final String KEY_START_CHANNEL = "key_start_channel";
+    private static final String KEY_HEALTHY_ONLY = "key_healthy_only";
+    private static final String KEY_AUTO_UPDATE = "key_auto_update";
+
+    // 界面类设置项 key
+    private static final String KEY_GRID_COLUMNS = "key_grid_columns";
+    private static final String KEY_SHOW_SIGNAL = "key_show_signal";
+    private static final String KEY_SHOW_BITRATE = "key_show_bitrate";
+    private static final String KEY_SHOW_SOURCE_INFO = "key_show_source_info";
+
+    // 关于
     private static final String KEY_ABOUT = "key_about";
 
     private RecyclerView rvCategories;
@@ -81,6 +101,7 @@ public class SettingsActivity extends AppCompatActivity {
         cats.add(new SettingCategoryAdapter.Category(CAT_PLAY, "播放", "▶️"));
         cats.add(new SettingCategoryAdapter.Category(CAT_BOOT, "启动", "🚀"));
         cats.add(new SettingCategoryAdapter.Category(CAT_CONTENT, "内容", "📺"));
+        cats.add(new SettingCategoryAdapter.Category(CAT_UI, "界面", "🎨"));
         cats.add(new SettingCategoryAdapter.Category(CAT_ABOUT, "关于", "ℹ️"));
 
         categoryAdapter = new SettingCategoryAdapter((cat, pos) -> {
@@ -126,6 +147,16 @@ public class SettingsActivity extends AppCompatActivity {
                         .withSummary(prefs.getFloat("playback_speed", 1.0f) + "x"));
                 items.add(new SettingItem(KEY_THEME, "主题", SettingItem.TYPE_ACTION)
                         .withSummary(themeLabel(prefs.getInt("theme", 0))));
+                items.add(new SettingItem(KEY_SHOW_EPG, "EPG 节目单", SettingItem.TYPE_TOGGLE)
+                        .withToggle("show_epg", true)
+                        .withSummary(prefs.getBoolean("show_epg", true) ? "已开启" : "已关闭"));
+                items.add(new SettingItem(KEY_SOURCE_STRATEGY, "源选择策略", SettingItem.TYPE_ACTION)
+                        .withSummary(sourceStrategyLabel(prefs.getString("source_strategy", "smart"))));
+                items.add(new SettingItem(KEY_BUFFER_MODE, "缓冲模式", SettingItem.TYPE_ACTION)
+                        .withSummary(bufferModeLabel(prefs.getString("buffer_mode", "standard"))));
+                items.add(new SettingItem(KEY_AUTO_SWITCH, "自动切源", SettingItem.TYPE_TOGGLE)
+                        .withToggle("auto_switch_source", true)
+                        .withSummary(prefs.getBoolean("auto_switch_source", true) ? "已开启" : "已关闭"));
                 items.add(new SettingItem(KEY_MULTIVIEW, "多画面模式", SettingItem.TYPE_ACTION)
                         .withSummary("2x2"));
                 break;
@@ -136,6 +167,8 @@ public class SettingsActivity extends AppCompatActivity {
                         .withSummary(prefs.getBoolean("boot_launch_enabled", false) ? "已开启" : "已关闭"));
                 items.add(new SettingItem(KEY_START_CHANNEL, "启动进入频道", SettingItem.TYPE_ACTION)
                         .withSummary(startChannelLabel(prefs.getBoolean("start_last_channel", true))));
+                items.add(new SettingItem(KEY_STARTUP_PAGE, "启动页面", SettingItem.TYPE_ACTION)
+                        .withSummary(startupPageLabel(prefs.getString("startup_page", "all"))));
                 items.add(new SettingItem(KEY_PARENTAL, "家长模式", SettingItem.TYPE_ACTION)
                         .withSummary(prefs.getBoolean("parental_enabled", false) ? "已开启" : "已关闭"));
                 items.add(new SettingItem(KEY_SLEEP_TIMER, "定时关机", SettingItem.TYPE_ACTION)
@@ -147,12 +180,31 @@ public class SettingsActivity extends AppCompatActivity {
                         .withSummary("APK 版本"));
                 items.add(new SettingItem(KEY_REFRESH_SOURCE, "更新频道源", SettingItem.TYPE_ACTION)
                         .withSummary("重新拉取"));
+                items.add(new SettingItem(KEY_HEALTHY_ONLY, "仅显示健康频道", SettingItem.TYPE_TOGGLE)
+                        .withToggle("healthy_only", false)
+                        .withSummary(prefs.getBoolean("healthy_only", false) ? "已开启" : "已关闭"));
+                items.add(new SettingItem(KEY_AUTO_UPDATE, "自动更新间隔", SettingItem.TYPE_ACTION)
+                        .withSummary(autoUpdateLabel(prefs.getString("auto_update_interval", "24"))));
                 items.add(new SettingItem(KEY_GROUP_DISPLAY, "分组显示管理", SettingItem.TYPE_ACTION)
                         .withSummary(hiddenGroupsSummary(prefs.getString("hidden_groups", ""))));
                 items.add(new SettingItem(KEY_CUSTOM_SOURCE, "自定义源", SettingItem.TYPE_ACTION)
                         .withSummary(customSourceSummary(prefs.getString("custom_sources", ""))));
                 items.add(new SettingItem(KEY_SERVER_URL, "服务器地址", SettingItem.TYPE_ACTION)
                         .withSummary(prefs.getString("server_url", "http://192.168.1.100:8000")));
+                break;
+
+            case CAT_UI:
+                items.add(new SettingItem(KEY_GRID_COLUMNS, "网格列数", SettingItem.TYPE_ACTION)
+                        .withSummary(gridColumnsLabel(prefs.getInt("grid_columns", -1))));
+                items.add(new SettingItem(KEY_SHOW_SIGNAL, "信号指示器", SettingItem.TYPE_TOGGLE)
+                        .withToggle("show_signal", true)
+                        .withSummary(prefs.getBoolean("show_signal", true) ? "已开启" : "已关闭"));
+                items.add(new SettingItem(KEY_SHOW_BITRATE, "码率/分辨率显示", SettingItem.TYPE_TOGGLE)
+                        .withToggle("show_bitrate", true)
+                        .withSummary(prefs.getBoolean("show_bitrate", true) ? "已开启" : "已关闭"));
+                items.add(new SettingItem(KEY_SHOW_SOURCE_INFO, "频道源信息", SettingItem.TYPE_TOGGLE)
+                        .withToggle("show_source_info", true)
+                        .withSummary(prefs.getBoolean("show_source_info", true) ? "已开启" : "已关闭"));
                 break;
 
             case CAT_ABOUT:
@@ -162,6 +214,45 @@ public class SettingsActivity extends AppCompatActivity {
         }
 
         itemAdapter.setItems(items);
+    }
+
+    private String sourceStrategyLabel(String strategy) {
+        switch (strategy) {
+            case "fastest": return "最快响应";
+            case "first": return "首个可用";
+            default: return "智能排序";
+        }
+    }
+
+    private String bufferModeLabel(String mode) {
+        switch (mode) {
+            case "low_latency": return "低延迟";
+            case "high_stability": return "高稳定";
+            default: return "标准";
+        }
+    }
+
+    private String startupPageLabel(String page) {
+        switch (page) {
+            case "favorites": return "收藏";
+            case "last": return "上次频道";
+            case "hot": return "热门频道";
+            default: return "全部频道";
+        }
+    }
+
+    private String autoUpdateLabel(String hours) {
+        switch (hours) {
+            case "1": return "每 1 小时";
+            case "6": return "每 6 小时";
+            case "never": return "关闭";
+            default: return "每天";
+        }
+    }
+
+    private String gridColumnsLabel(int cols) {
+        if (cols >= 2 && cols <= 5) return cols + " 列";
+        return "自动";
     }
 
     private String qualityLabel(int maxHeight) {
@@ -297,24 +388,50 @@ public class SettingsActivity extends AppCompatActivity {
     // ── 设置项点击处理 ──────────────────────────────────────
     private void handleSettingClick(SettingItem item) {
         switch (item.key) {
+            // 播放
             case KEY_DECODER: showDecoderDialog(); break;
             case KEY_RESIZE: showResizeDialog(); break;
             case KEY_SPEED: showSpeedDialog(); break;
             case KEY_QUALITY: showQualityDialog(); break;
             case KEY_MULTIVIEW: Toast.makeText(this, "多画面需在主界面开启", Toast.LENGTH_SHORT).show(); break;
             case KEY_THEME: showThemeDialog(); break;
+            case KEY_SHOW_EPG: toggleGeneric(item, "show_epg"); break;
+            case KEY_SOURCE_STRATEGY: showSourceStrategyDialog(); break;
+            case KEY_BUFFER_MODE: showBufferModeDialog(); break;
+            case KEY_AUTO_SWITCH: toggleGeneric(item, "auto_switch_source"); break;
+            // 启动
             case KEY_BOOT_LAUNCH: toggleBootLaunch(item); break;
             case KEY_START_CHANNEL: showStartChannelDialog(); break;
+            case KEY_STARTUP_PAGE: showStartupPageDialog(); break;
             case KEY_PARENTAL: showParentalDialog(); break;
             case KEY_SLEEP_TIMER: showSleepTimerDialog(); break;
+            // 内容
             case KEY_CHECK_UPDATE: checkUpdate(); break;
             case KEY_REFRESH_SOURCE: refreshSource(); break;
+            case KEY_HEALTHY_ONLY: toggleGeneric(item, "healthy_only"); break;
+            case KEY_AUTO_UPDATE: showAutoUpdateDialog(); break;
             case KEY_GROUP_DISPLAY: showGroupDisplayDialog(); break;
             case KEY_CUSTOM_SOURCE: showCustomSourceDialog(); break;
             case KEY_SERVER_URL: showServerUrlDialog(); break;
+            // 界面
+            case KEY_GRID_COLUMNS: showGridColumnsDialog(); break;
+            case KEY_SHOW_SIGNAL: toggleGeneric(item, "show_signal"); break;
+            case KEY_SHOW_BITRATE: toggleGeneric(item, "show_bitrate"); break;
+            case KEY_SHOW_SOURCE_INFO: toggleGeneric(item, "show_source_info"); break;
+            // 关于
             case KEY_ABOUT: showAboutDialog(); break;
         }
         refreshItems();
+    }
+
+    /** 通用 TOGGLE 切换（适用于所有简单 boolean 设置） */
+    private void toggleGeneric(SettingItem item, String prefKey) {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        boolean enabled = prefs.getBoolean(prefKey, item.prefDefault);
+        enabled = !enabled;
+        prefs.edit().putBoolean(prefKey, enabled).apply();
+        Toast.makeText(this, item.title + ": " + (enabled ? "已开启" : "已关闭"),
+                Toast.LENGTH_SHORT).show();
     }
 
     // ── 画质限制 ──────────────────────────────────────────
@@ -364,6 +481,113 @@ public class SettingsActivity extends AppCompatActivity {
                             prefs.edit().putBoolean("start_last_channel", which == 0).apply();
                             dialog.dismiss();
                         })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    // ── 源选择策略 ──────────────────────────────────────────
+    private void showSourceStrategyDialog() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        String current = prefs.getString("source_strategy", "smart");
+        String[] labels = {"智能排序 (推荐)", "最快响应", "首个可用"};
+        String[] values = {"smart", "fastest", "first"};
+        int cur = 0;
+        for (int i = 0; i < values.length; i++) {
+            if (values[i].equals(current)) { cur = i; break; }
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("源选择策略")
+                .setMessage("智能排序：综合评分排序\n最快响应：测速后选最快\n首个可用：按原始顺序")
+                .setSingleChoiceItems(labels, cur, (dialog, which) -> {
+                    prefs.edit().putString("source_strategy", values[which]).apply();
+                    dialog.dismiss();
+                    Toast.makeText(this, "源策略: " + labels[which], Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    // ── 缓冲模式 ──────────────────────────────────────────
+    private void showBufferModeDialog() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        String current = prefs.getString("buffer_mode", "standard");
+        String[] labels = {"低延迟 (5s/15s)", "标准 (10s/30s)", "高稳定 (20s/60s)"};
+        String[] values = {"low_latency", "standard", "high_stability"};
+        int cur = 1;
+        for (int i = 0; i < values.length; i++) {
+            if (values[i].equals(current)) { cur = i; break; }
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("缓冲模式")
+                .setMessage("低延迟：切台快但易卡顿\n标准：平衡\n高稳定：缓冲大但更流畅")
+                .setSingleChoiceItems(labels, cur, (dialog, which) -> {
+                    prefs.edit().putString("buffer_mode", values[which]).apply();
+                    dialog.dismiss();
+                    Toast.makeText(this, "缓冲: " + labels[which], Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    // ── 启动页面 ──────────────────────────────────────────
+    private void showStartupPageDialog() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        String current = prefs.getString("startup_page", "all");
+        String[] labels = {"全部频道", "收藏", "上次频道", "热门频道"};
+        String[] values = {"all", "favorites", "last", "hot"};
+        int cur = 0;
+        for (int i = 0; i < values.length; i++) {
+            if (values[i].equals(current)) { cur = i; break; }
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("启动页面")
+                .setSingleChoiceItems(labels, cur, (dialog, which) -> {
+                    prefs.edit().putString("startup_page", values[which]).apply();
+                    dialog.dismiss();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    // ── 自动更新间隔 ──────────────────────────────────────────
+    private void showAutoUpdateDialog() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        String current = prefs.getString("auto_update_interval", "24");
+        String[] labels = {"每 1 小时", "每 6 小时", "每天", "关闭"};
+        String[] values = {"1", "6", "24", "never"};
+        int cur = 2;
+        for (int i = 0; i < values.length; i++) {
+            if (values[i].equals(current)) { cur = i; break; }
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("自动更新间隔")
+                .setMessage("频道源自动更新频率（仅自建后端生效）")
+                .setSingleChoiceItems(labels, cur, (dialog, which) -> {
+                    prefs.edit().putString("auto_update_interval", values[which]).apply();
+                    dialog.dismiss();
+                    Toast.makeText(this, labels[which], Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    // ── 网格列数 ──────────────────────────────────────────
+    private void showGridColumnsDialog() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        int current = prefs.getInt("grid_columns", -1);
+        String[] labels = {"自动 (推荐)", "2 列", "3 列", "4 列", "5 列"};
+        int[] values = {-1, 2, 3, 4, 5};
+        int cur = 0;
+        for (int i = 0; i < values.length; i++) {
+            if (values[i] == current) { cur = i; break; }
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("网格列数")
+                .setSingleChoiceItems(labels, cur, (dialog, which) -> {
+                    prefs.edit().putInt("grid_columns", values[which]).apply();
+                    dialog.dismiss();
+                    Toast.makeText(this, labels[which], Toast.LENGTH_SHORT).show();
+                })
                 .setNegativeButton("取消", null)
                 .show();
     }
