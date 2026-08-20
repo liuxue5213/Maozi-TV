@@ -775,8 +775,13 @@ public class MainActivity extends AppCompatActivity {
             return super.onTouchEvent(event);
         }
 
-        // 面板关闭时，交给手势检测器
-        return gestureDetector != null && gestureDetector.onTouchEvent(event);
+        // 面板关闭时，先让手势检测器处理
+        // 如果手势检测器消费事件，返回 true
+        // 否则传递给父类，让其他视图（按钮、输入框等）也能接收触摸事件
+        if (gestureDetector != null && gestureDetector.onTouchEvent(event)) {
+            return true;
+        }
+        return super.onTouchEvent(event);
     }
 
     // ══════════════════════════════════════════════════════════
