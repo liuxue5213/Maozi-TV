@@ -270,9 +270,6 @@ public class MainActivity extends AppCompatActivity {
     // OK 键长按判定标志（isLongPress() 在 KEY_UP 上不可靠，用手动标志）
     private boolean okLongPressed = false;
 
-    // ── 音量 ────────────────────────────────────────────────
-    private AudioManager audioManager;
-
     // ══════════════════════════════════════════════════════════
     // Lifecycle
     // ══════════════════════════════════════════════════════════
@@ -770,9 +767,15 @@ public class MainActivity extends AppCompatActivity {
     public boolean onTouchEvent(MotionEvent event) {
         // 仅在播放器可见且面板关闭时处理手势
         if (channelPanel != null && channelPanel.getVisibility() == View.VISIBLE) {
+            // 面板打开时，点击屏幕关闭面板
+            if (event.getAction() == MotionEvent.ACTION_UP) {
+                toggleChannelPanel();
+                return true;
+            }
             return super.onTouchEvent(event);
         }
 
+        // 面板关闭时，交给手势检测器
         return gestureDetector != null && gestureDetector.onTouchEvent(event);
     }
 
@@ -1861,7 +1864,7 @@ public class MainActivity extends AppCompatActivity {
         if (channel == null) return;
 
         Integer currentCustom = getCustomChannelNumber(channel.id);
-        int currentNum = currentCustom != null ? currentCustom : channel.displayNumber;
+        int currentNum = currentCustom != null ? currentCustom : channel.channelNumber;
 
         android.widget.LinearLayout dialogLayout = new android.widget.LinearLayout(this);
         dialogLayout.setOrientation(android.widget.LinearLayout.VERTICAL);
@@ -1883,7 +1886,7 @@ public class MainActivity extends AppCompatActivity {
 
         android.widget.LinearLayout numberInputLayout = new android.widget.LinearLayout(this);
         numberInputLayout.setOrientation(android.widget.LinearLayout.HORIZONTAL);
-        numberInputLayout.setGravity(android.gravity.Gravity.CENTER_VERTICAL);
+        numberInputLayout.setGravity(android.view.Gravity.CENTER_VERTICAL);
 
         android.widget.Button btnDown = new android.widget.Button(this);
         btnDown.setText("−");
@@ -1943,7 +1946,7 @@ public class MainActivity extends AppCompatActivity {
                         int newNumber = Integer.parseInt(numberInput.getText().toString());
                         if (newNumber > 0) {
                             saveCustomChannelNumber(channel.id, newNumber);
-                            channel.displayNumber = newNumber;
+                            channel.channelNumber = newNumber;
                             channelAdapter.notifyChannelChanged(channel.id);
                             Toast.makeText(this, "频道号已更新: " + channel.name + " → " + newNumber, Toast.LENGTH_SHORT).show();
                         }
@@ -3555,16 +3558,6 @@ public class MainActivity extends AppCompatActivity {
     // ══════════════════════════════════════════════════════════
     // 触摸操作
     // ══════════════════════════════════════════════════════════
-
-    @Override
-    public boolean onTouchEvent(android.view.MotionEvent event) {
-        if (event.getAction() == android.view.MotionEvent.ACTION_UP) {
-            // 点击屏幕 → 切换选台面板（面板打开时则关闭）
-            toggleChannelPanel();
-            return true;
-        }
-        return super.onTouchEvent(event);
-    }
 
     // ══════════════════════════════════════════════════════════
     // 信号源信息显示
