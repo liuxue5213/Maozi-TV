@@ -689,6 +689,13 @@ public class MainActivity extends AppCompatActivity {
 
         gestureDetector = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
             @Override
+            public boolean onSingleTapConfirmed(android.view.MotionEvent e) {
+                // 单击 → 打开/关闭频道面板
+                toggleChannelPanel();
+                return true;
+            }
+
+            @Override
             public boolean onDoubleTap(android.view.MotionEvent e) {
                 // 双击 → 暂停/播放
                 togglePlayPause();
@@ -697,7 +704,7 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public boolean onScroll(android.view.MotionEvent e1, android.view.MotionEvent e2, float distanceX, float distanceY) {
-                if (player == null || !player.getPlayWhenReady()) return false;
+                if (player == null) return false;
 
                 float screenWidth = getResources().getDisplayMetrics().widthPixels;
                 float x = e1.getX();
@@ -710,8 +717,10 @@ public class MainActivity extends AppCompatActivity {
                     // 右侧滑动 → 亮度调节
                     adjustBrightness(distanceY);
                 } else {
-                    // 中间左右滑动 → 快进/快退
-                    seekVideo(distanceX);
+                    // 中间左右滑动 → 快进/快退（仅暂停时有效）
+                    if (!player.getPlayWhenReady()) {
+                        seekVideo(distanceX);
+                    }
                 }
                 return true;
             }
@@ -1068,8 +1077,26 @@ public class MainActivity extends AppCompatActivity {
     private void togglePlayPause() {
         if (player == null) return;
         boolean isPlaying = player.getPlayWhenReady();
-        player.setPlayWhenReady(!isPlaying);
+        boolean willBePlaying = !isPlaying;
+        player.setPlayWhenReady(willBePlaying);
         updatePlayPauseButton();
+
+        // 暂停时：显示叠加层并保持可见，方便点击"继续播放"
+        // 播放时：恢复自动隐藏
+        if (!willBePlaying) {
+            // 暂停时，显示叠加层并取消自动隐藏
+            if (currentChannel != null) {
+                showChannelInfo(currentChannel, false);
+            }
+            infoOverlayHandler.removeCallbacksAndMessages(null);
+        } else {
+            // 恢复播放时，恢复自动隐藏
+            if (channelInfoOverlay.getVisibility() == View.VISIBLE) {
+                infoOverlayHandler.postDelayed(() ->
+                        hideChannelInfoOverlay(), INFO_OVERLAY_DURATION);
+            }
+        }
+
         Toast.makeText(this, !isPlaying ? "已暂停" : "继续播放", Toast.LENGTH_SHORT).show();
     }
 
