@@ -137,6 +137,22 @@
                     android:textSize="10sp"
                     android:visibility="gone" />
             </LinearLayout>
+
+            <!-- 播放/暂停控制按钮 -->
+            <TextView
+                android:id="@+id/tv_play_pause"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="⏸ 暂停"
+                android:textColor="#4A9EFF"
+                android:textSize="12sp"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp"
+                android:background="@drawable/bg_osd_panel"
+                android:visibility="gone" />
         </LinearLayout>
 
         <TextView

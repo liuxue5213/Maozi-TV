@@ -68,8 +68,16 @@ public class CrashLogHandler {
             }
             sb.append("========================================\n\n");
 
-            writeToFile(getExternalLogFile(), sb.toString());
-            writeToFile(getPublicLogFile(), sb.toString());
+            String logContent = sb.toString();
+            writeToFile(getExternalLogFile(), logContent);
+            writeToFile(getPublicLogFile(), logContent);
+
+            // 自动上报崩溃日志到云端
+            try {
+                CloudSync.track(appContext, "crash", 0, "App崩溃", logContent);
+            } catch (Exception e) {
+                Log.e(TAG, "上报崩溃日志失败: " + e.getMessage());
+            }
         } catch (Exception e) {
             Log.e(TAG, "写入崩溃日志失败: " + e.getMessage());
         }

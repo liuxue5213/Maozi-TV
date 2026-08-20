@@ -123,9 +123,16 @@ public final class CategoryHelper {
         if (query == null || query.trim().isEmpty()) return channels;
         String q = query.trim().toLowerCase(Locale.ROOT);
         List<ChannelOptimized> result = new ArrayList<>();
+        
         for (ChannelOptimized ch : channels) {
-            if (safe(ch.name).toLowerCase(Locale.ROOT).contains(q)
-                    || safe(ch.group).toLowerCase(Locale.ROOT).contains(q)) {
+            // 原有匹配：频道名/分组包含查询字符串
+            boolean nameMatch = safe(ch.name).toLowerCase(Locale.ROOT).contains(q);
+            boolean groupMatch = safe(ch.group).toLowerCase(Locale.ROOT).contains(q);
+            
+            // 拼音匹配：使用 PinyinMatcher
+            boolean pinyinMatch = PinyinMatcher.matches(ch.name, q);
+            
+            if (nameMatch || groupMatch || pinyinMatch) {
                 result.add(ch);
             }
         }

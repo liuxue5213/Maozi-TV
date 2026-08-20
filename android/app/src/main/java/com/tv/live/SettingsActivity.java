@@ -61,6 +61,8 @@ public class SettingsActivity extends AppCompatActivity {
     private static final String KEY_CHECK_UPDATE = "key_check_update";
     private static final String KEY_REFRESH_SOURCE = "key_refresh_source";
     private static final String KEY_GROUP_DISPLAY = "key_group_display";
+    private static final String KEY_FAV_GROUP_MANAGE = "key_fav_group_manage";
+    private static final String KEY_FEEDBACK = "key_feedback";
     private static final String KEY_CUSTOM_SOURCE = "key_custom_source";
     private static final String KEY_SERVER_URL = "key_server_url";
     private static final String KEY_HEALTHY_ONLY = "key_healthy_only";
@@ -187,6 +189,10 @@ public class SettingsActivity extends AppCompatActivity {
                         .withSummary(autoUpdateLabel(prefs.getString("auto_update_interval", "24"))));
                 items.add(new SettingItem(KEY_GROUP_DISPLAY, "分组显示管理", SettingItem.TYPE_ACTION)
                         .withSummary(hiddenGroupsSummary(prefs.getString("hidden_groups", ""))));
+                items.add(new SettingItem(KEY_FAV_GROUP_MANAGE, "收藏分组管理", SettingItem.TYPE_ACTION)
+                        .withSummary("管理收藏频道分组"));
+                items.add(new SettingItem(KEY_FEEDBACK, "反馈问题", SettingItem.TYPE_ACTION)
+                        .withSummary("提交问题反馈或崩溃日志"));
                 items.add(new SettingItem(KEY_CUSTOM_SOURCE, "自定义源", SettingItem.TYPE_ACTION)
                         .withSummary(customSourceSummary(prefs.getString("custom_sources", ""))));
                 items.add(new SettingItem(KEY_SERVER_URL, "服务器地址", SettingItem.TYPE_ACTION)
@@ -411,6 +417,14 @@ public class SettingsActivity extends AppCompatActivity {
             case KEY_HEALTHY_ONLY: toggleGeneric(item, "healthy_only"); break;
             case KEY_AUTO_UPDATE: showAutoUpdateDialog(); break;
             case KEY_GROUP_DISPLAY: showGroupDisplayDialog(); break;
+            case KEY_FAV_GROUP_MANAGE:
+                // 返回到 MainActivity，触发分组管理对话框
+                setResult(1003); // 使用特殊结果码触发分组管理
+                finish();
+                break;
+            case KEY_FEEDBACK:
+                showFeedbackDialog();
+                break;
             case KEY_CUSTOM_SOURCE: showCustomSourceDialog(); break;
             case KEY_SERVER_URL: showServerUrlDialog(); break;
             // 界面
@@ -720,6 +734,75 @@ public class SettingsActivity extends AppCompatActivity {
     private void checkUpdate() {
         UpdateChecker checker = new UpdateChecker(this);
         checker.checkForUpdate(false);
+    }
+
+    private void showFeedbackDialog() {
+        // 读取崩溃日志
+        String crashLog = CrashLogHandler.readCrashLog();
+        boolean hasCrashLog = crashLog != null && !crashLog.isEmpty();
+
+        StringBuilder message = new StringBuilder();
+        message.append("请描述您遇到的问题：\n\n");
+
+        if (hasCrashLog) {
+            message.append("【检测到崩溃日志】\n");
+            message.append("最近一次崩溃时间：\n");
+            // 提取第一行时间戳
+            String[] lines = crashLog.split("\n");
+            for (String line : lines) {
+                if (line.contains("时间:")) {
+                    message.append(line).append("\n");
+                    break;
+                }
+            }
+            message.append("\n您可以：\n");
+            message.append("1. 提交问题反馈（会自动附带崩溃日志）\n");
+            message.append("2. 只清除崩溃日志\n");
+        }
+
+        EditText input = new EditText(this);
+        input.setHint("问题描述（可选）");
+        input.setInputType(InputType.TYPE_CLASS_TEXT);
+        input.setMinLines(3);
+        input.setMaxLines(5);
+
+        new AlertDialog.Builder(this)
+                .setTitle(hasCrashLog ? "反馈问题（含崩溃日志）" : "反馈问题")
+                .setMessage(message.toString())
+                .setView(input)
+                .setPositiveButton("提交反馈", (dialog, which) -> {
+                    String feedbackText = input.getText().toString().trim();
+                    submitFeedback(feedbackText, crashLog);
+                })
+                .setNegativeButton(hasCrashLog ? "清除日志" : "取消", (dialog, which) -> {
+                    if (hasCrashLog) {
+                        CrashLogHandler.clearCrashLog();
+                        Toast.makeText(this, "崩溃日志已清除", Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .show();
+    }
+
+    private void submitFeedback(String feedbackText, String crashLog) {
+        StringBuilder content = new StringBuilder();
+        content.append("=== 用户反馈 ===\n");
+        content.append(feedbackText.isEmpty() ? "（无描述）" : feedbackText).append("\n\n");
+
+        if (crashLog != null && !crashLog.isEmpty()) {
+            content.append("=== 崩溃日志 ===\n");
+            content.append(crashLog).append("\n");
+        }
+
+        // 收集设备信息
+        content.append("=== 设备信息 ===\n");
+        content.append("型号: ").append(android.os.Build.MODEL).append("\n");
+        content.append("Android: ").append(android.os.Build.VERSION.RELEASE).append("\n");
+        content.append("时间: ").append(new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss",
+                java.util.Locale.getDefault()).format(new java.util.Date())).append("\n");
+
+        // 上传到云端
+        CloudSync.track(this, "feedback", 0, "用户反馈", content.toString());
+        Toast.makeText(this, "反馈已提交，感谢您的反馈！", Toast.LENGTH_SHORT).show();
     }
 
     private void showCustomSourceDialog() {

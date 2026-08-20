@@ -13,7 +13,9 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.util.Rational;
+import android.view.GestureDetector;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
 import android.text.Editable;
@@ -156,6 +158,13 @@ public class MainActivity extends AppCompatActivity {
     private static final int RESIZE_MODE_16_9 = 3;      // 强制 16:9
     private static final int RESIZE_MODE_4_3 = 4;       // 强制 4:3
     private static final String[] RESIZE_MODE_LABELS = {"自适应", "裁剪填充", "缩放拉伸", "16:9", "4:3"};
+    private static final String PREF_CHANNEL_RESIZE_MODES = "channel_resize_modes";
+
+    // ── 手势控制 ───────────────────────────────────────────
+    private GestureDetector gestureDetector;
+    private AudioManager audioManager;
+    private int maxVolume;
+    private float brightness = -1f; // -1 表示使用系统亮度
 
     // ── 视图 ────────────────────────────────────────────────
     private PlayerView playerView;
@@ -182,6 +191,7 @@ public class MainActivity extends AppCompatActivity {
     private TextView tvResolution;
     private TextView tvBitrate;
     private TextView tvSignalText;
+    private TextView tvPlayPause;
     private View channelInfoOverlay;
     private TextView tvSpeed;
     private TextView tvChannelNumber;
@@ -294,6 +304,7 @@ public class MainActivity extends AppCompatActivity {
 
         initViews();
         initPlayer();
+        initGestureControl();
         initRecyclerViews();
         setupKeyListener();
 
@@ -428,6 +439,10 @@ public class MainActivity extends AppCompatActivity {
                 cachedBuckets = CategoryHelper.buildSmartBuckets(filterHiddenGroups(allChannels));
                 refreshCategoryNav();
                 refreshChannelGrid();
+            }
+            // 设置页触发了「收藏分组管理」
+            if (resultCode == 1003) {
+                showGroupManagementDialog();
             }
             // 刷新收藏状态（可能从云端/设置页变化）
             if (channelAdapter != null) {
@@ -587,6 +602,26 @@ public class MainActivity extends AppCompatActivity {
         sigBar2 = findViewById(R.id.sig_bar2);
         sigBar3 = findViewById(R.id.sig_bar3);
         sigBar4 = findViewById(R.id.sig_bar4);
+        tvPlayPause = findViewById(R.id.tv_play_pause);
+        if (tvPlayPause != null) {
+            tvPlayPause.setOnClickListener(v -> togglePlayPause());
+        }
+
+        // 频道信息叠加层长按 → 音轨选择
+        GestureDetector overlayGestureDetector = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
+            @Override
+            public void onLongPress(MotionEvent e) {
+                if (player != null && trackSelector != null) {
+                    showTrackDialog(false); // false = 音轨
+                }
+            }
+        });
+        if (channelInfoOverlay != null) {
+            channelInfoOverlay.setOnTouchListener((v, event) -> {
+                overlayGestureDetector.onTouchEvent(event);
+                return true;
+            });
+        }
 
         // 多画面网格
         multiviewGrid = findViewById(R.id.multiview_grid);
@@ -645,6 +680,100 @@ public class MainActivity extends AppCompatActivity {
     private void hideStatus() {
         if (tvStatusContainer != null) tvStatusContainer.setVisibility(View.GONE);
         if (progressChannels != null) progressChannels.setVisibility(View.GONE);
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // 手势控制初始化
+    // ══════════════════════════════════════════════════════════
+
+    private void initGestureControl() {
+        audioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
+        maxVolume = audioManager != null ? audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC) : 100;
+
+        gestureDetector = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
+            @Override
+            public boolean onDoubleTap(android.view.MotionEvent e) {
+                // 双击 → 暂停/播放
+                togglePlayPause();
+                return true;
+            }
+
+            @Override
+            public boolean onScroll(android.view.MotionEvent e1, android.view.MotionEvent e2, float distanceX, float distanceY) {
+                if (player == null || !player.getPlayWhenReady()) return false;
+
+                float screenWidth = getResources().getDisplayMetrics().widthPixels;
+                float x = e1.getX();
+                float y = e1.getY();
+
+                if (x < screenWidth / 3) {
+                    // 左侧滑动 → 音量调节
+                    adjustVolume(distanceY);
+                } else if (x > screenWidth * 2 / 3) {
+                    // 右侧滑动 → 亮度调节
+                    adjustBrightness(distanceY);
+                } else {
+                    // 中间左右滑动 → 快进/快退
+                    seekVideo(distanceX);
+                }
+                return true;
+            }
+        });
+    }
+
+    private void adjustVolume(float distanceY) {
+        if (audioManager == null) return;
+
+        int currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
+        int delta = (int) (distanceY / 10); // 调整灵敏度
+
+        int newVolume = currentVolume + delta;
+        if (newVolume < 0) newVolume = 0;
+        if (newVolume > maxVolume) newVolume = maxVolume;
+
+        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVolume, 0);
+
+        // 显示音量提示
+        int volumePercent = (int) ((newVolume * 100f) / maxVolume);
+        Toast.makeText(this, "音量: " + volumePercent + "%", Toast.LENGTH_SHORT).show();
+    }
+
+    private void adjustBrightness(float distanceY) {
+        // 获取当前窗口亮度
+        WindowManager.LayoutParams lp = getWindow().getAttributes();
+        if (brightness < 0) {
+            brightness = lp.screenBrightness == -1 ? 0.5f : lp.screenBrightness;
+        }
+
+        float delta = distanceY / 1000f; // 调整灵敏度
+        brightness += delta;
+        if (brightness < 0.1f) brightness = 0.1f;
+        if (brightness > 1f) brightness = 1f;
+
+        lp.screenBrightness = brightness;
+        getWindow().setAttributes(lp);
+
+        // 显示亮度提示
+        int brightnessPercent = (int) (brightness * 100);
+        Toast.makeText(this, "亮度: " + brightnessPercent + "%", Toast.LENGTH_SHORT).show();
+    }
+
+    private void seekVideo(float distanceX) {
+        if (player == null) return;
+
+        // ExoPlayer 直播流不支持 seek，只在缓冲窗口内有效
+        // 这里仅作为占位，实际直播场景快进意义不大
+        // 可用于暂停后的时移场景
+    }
+
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        // 仅在播放器可见且面板关闭时处理手势
+        if (channelPanel != null && channelPanel.getVisibility() == View.VISIBLE) {
+            return super.onTouchEvent(event);
+        }
+
+        return gestureDetector != null && gestureDetector.onTouchEvent(event);
     }
 
     // ══════════════════════════════════════════════════════════
@@ -812,6 +941,12 @@ public class MainActivity extends AppCompatActivity {
         if (speedMeter != null) speedMeter.reset();
         playUrl(channel.getCurrentSourceUrl());
 
+        // 应用该频道的画幅偏好（如存在）
+        Integer channelResizeMode = getChannelResizeMode(channel.id);
+        if (channelResizeMode != null) {
+            applyResizeMode(channelResizeMode);
+        }
+
         // 记住上次播放的频道，下次启动自动恢复
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .edit().putInt(KEY_LAST_CHANNEL, channel.id).apply();
@@ -842,9 +977,13 @@ public class MainActivity extends AppCompatActivity {
 
     private void applyResizeMode(int mode) {
         currentResizeMode = mode;
-        // 持久化，供设置中心读取
+        // 持久化全局设置，供设置中心读取
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .edit().putInt("resize_mode", mode).apply();
+        // 同时保存到当前频道的偏好
+        if (currentChannel != null) {
+            saveChannelResizeMode(currentChannel.id, mode);
+        }
         if (playerView == null) return;
         switch (mode) {
             case RESIZE_MODE_FIT:     playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);    break;
@@ -859,6 +998,32 @@ public class MainActivity extends AppCompatActivity {
     private void cycleResizeMode() {
         int next = (currentResizeMode + 1) % RESIZE_MODE_LABELS.length;
         applyResizeMode(next);
+    }
+
+    private void saveChannelResizeMode(int channelId, int mode) {
+        try {
+            SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+            String existingJson = prefs.getString(PREF_CHANNEL_RESIZE_MODES, "{}");
+            org.json.JSONObject obj = new org.json.JSONObject(existingJson);
+            obj.put(String.valueOf(channelId), mode);
+            prefs.edit().putString(PREF_CHANNEL_RESIZE_MODES, obj.toString()).apply();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private Integer getChannelResizeMode(int channelId) {
+        try {
+            SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+            String existingJson = prefs.getString(PREF_CHANNEL_RESIZE_MODES, "{}");
+            org.json.JSONObject obj = new org.json.JSONObject(existingJson);
+            if (obj.has(String.valueOf(channelId))) {
+                return obj.getInt(String.valueOf(channelId));
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return null;
     }
 
     // ══════════════════════════════════════════════════════════
@@ -886,6 +1051,24 @@ public class MainActivity extends AppCompatActivity {
         }
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .edit().putString(KEY_PLAY_HISTORY, sb.toString()).apply();
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // 播放/暂停控制（直播暂停/时移）
+    // ══════════════════════════════════════════════════════════
+
+    private void togglePlayPause() {
+        if (player == null) return;
+        boolean isPlaying = player.getPlayWhenReady();
+        player.setPlayWhenReady(!isPlaying);
+        updatePlayPauseButton();
+        Toast.makeText(this, !isPlaying ? "已暂停" : "继续播放", Toast.LENGTH_SHORT).show();
+    }
+
+    private void updatePlayPauseButton() {
+        if (tvPlayPause == null || player == null) return;
+        boolean isPlaying = player.getPlayWhenReady();
+        tvPlayPause.setText(isPlaying ? "⏸ 暂停" : "▶️ 继续");
     }
 
     private void addToHistory(int channelId) {
@@ -971,6 +1154,13 @@ public class MainActivity extends AppCompatActivity {
         }
         // EPG 当前节目：预留位置，由 fetchAndShowEpgOverlay 异步填充
         if (tvEpgNow != null) tvEpgNow.setVisibility(View.GONE);
+
+        // 显示播放/暂停按钮
+        if (tvPlayPause != null) {
+            tvPlayPause.setVisibility(View.VISIBLE);
+            updatePlayPauseButton();
+        }
+
         channelInfoOverlay.setVisibility(View.VISIBLE);
 
         infoOverlayHandler.removeCallbacksAndMessages(null);
@@ -1117,7 +1307,27 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public boolean onChannelLongClick(ChannelOptimized channel, int position) {
-                toggleFavorite(channel);
+                // 长按频道 → 弽出菜单（收藏/取消收藏 + 移动到分组 + 调整频道号）
+                List<String> menuItems = new ArrayList<>();
+                menuItems.add(channel.isFavorite ? "取消收藏" : "收藏");
+                menuItems.add("移动到分组");
+                menuItems.add("调整频道号");
+
+                new android.app.AlertDialog.Builder(MainActivity.this)
+                        .setTitle(channel.name)
+                        .setItems(menuItems.toArray(new String[0]), (dialog, which) -> {
+                            if (which == 0) {
+                                // 第一项：收藏/取消收藏
+                                toggleFavorite(channel);
+                            } else if (which == 1) {
+                                // 第二项：移动到分组
+                                showMoveToGroupDialog(channel);
+                            } else if (which == 2) {
+                                // 第三项：调整频道号
+                                showChannelNumberEditDialog(channel);
+                            }
+                        })
+                        .show();
                 recordUserInteraction();
                 return true;
             }
@@ -1289,6 +1499,13 @@ public class MainActivity extends AppCompatActivity {
                 Collections.addAll(favSet, favStr.split(","));
             }
 
+            // 一次性迁移：将旧收藏数据迁移到新的分组结构
+            if (FavoriteGroupManager.getGroups(this).size() == 1 &&
+                FavoriteGroupManager.getChannelsInGroup(this, "默认").isEmpty() &&
+                !favStr.isEmpty()) {
+                FavoriteGroupManager.migrateFromOldFavorites(this, favStr);
+            }
+
             // 解析频道（使用优化模型）
             List<ChannelOptimized> parsed = new ArrayList<>();
             int channelIndex = 0;
@@ -1302,8 +1519,9 @@ public class MainActivity extends AppCompatActivity {
 
                 ch.channelNumber = ++channelIndex; // 频道号从1开始，跳过无源频道后连续编号
 
-                // 恢复收藏状态
-                ch.isFavorite = favSet.contains(String.valueOf(ch.id));
+                // 恢复收藏状态（从新的分组管理器读取，兼容旧格式）
+                ch.isFavorite = FavoriteGroupManager.isChannelInAnyGroup(this, ch.id) ||
+                               favSet.contains(String.valueOf(ch.id));
 
                 parsed.add(ch);
             }
@@ -1575,7 +1793,17 @@ public class MainActivity extends AppCompatActivity {
     // ══════════════════════════════════════════════════════════
 
     private void toggleFavorite(ChannelOptimized channel) {
+        boolean wasFavorite = channel.isFavorite;
         channel.isFavorite = !channel.isFavorite;
+
+        if (channel.isFavorite) {
+            // 收藏：添加到默认分组
+            FavoriteGroupManager.addChannelToGroup(this, channel.id, "默认");
+        } else {
+            // 取消收藏：从所有分组中移除
+            FavoriteGroupManager.removeChannelFromAllGroups(this, channel.id);
+        }
+
         saveFavorites();
 
         String msg = channel.isFavorite ? "已收藏: " + channel.name : "取消收藏: " + channel.name;
@@ -1595,6 +1823,232 @@ public class MainActivity extends AppCompatActivity {
         }
         // 轻量刷新收藏分类计数（仅更新收藏 Tab 的数字）
         refreshFavoriteCount();
+    }
+
+    // ══════════════════════════════════════════════════════════
+    // 频道号自定义编辑
+    // ══════════════════════════════════════════════════════════
+
+    private static final String PREF_CUSTOM_CHANNEL_NUMBERS = "custom_channel_numbers";
+
+    private void saveCustomChannelNumber(int channelId, int customNumber) {
+        try {
+            SharedPreferences prefs = getSharedPreferences("app_prefs", MODE_PRIVATE);
+            String existingJson = prefs.getString(PREF_CUSTOM_CHANNEL_NUMBERS, "{}");
+            org.json.JSONObject obj = new org.json.JSONObject(existingJson);
+            obj.put(String.valueOf(channelId), customNumber);
+            prefs.edit().putString(PREF_CUSTOM_CHANNEL_NUMBERS, obj.toString()).apply();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private Integer getCustomChannelNumber(int channelId) {
+        try {
+            SharedPreferences prefs = getSharedPreferences("app_prefs", MODE_PRIVATE);
+            String existingJson = prefs.getString(PREF_CUSTOM_CHANNEL_NUMBERS, "{}");
+            org.json.JSONObject obj = new org.json.JSONObject(existingJson);
+            if (obj.has(String.valueOf(channelId))) {
+                return obj.getInt(String.valueOf(channelId));
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return null;
+    }
+
+    private void showChannelNumberEditDialog(ChannelOptimized channel) {
+        if (channel == null) return;
+
+        Integer currentCustom = getCustomChannelNumber(channel.id);
+        int currentNum = currentCustom != null ? currentCustom : channel.displayNumber;
+
+        android.widget.LinearLayout dialogLayout = new android.widget.LinearLayout(this);
+        dialogLayout.setOrientation(android.widget.LinearLayout.VERTICAL);
+        dialogLayout.setPadding(48, 32, 48, 16);
+
+        android.widget.TextView titleView = new android.widget.TextView(this);
+        titleView.setText("调整频道号");
+        titleView.setTextSize(18);
+        titleView.setTextColor(0xFFFFFFFF);
+        titleView.setPadding(0, 0, 0, 24);
+        dialogLayout.addView(titleView);
+
+        android.widget.TextView hintView = new android.widget.TextView(this);
+        hintView.setText("当前频道: " + channel.name);
+        hintView.setTextSize(14);
+        hintView.setTextColor(0xCCFFFFFF);
+        hintView.setPadding(0, 0, 0, 16);
+        dialogLayout.addView(hintView);
+
+        android.widget.LinearLayout numberInputLayout = new android.widget.LinearLayout(this);
+        numberInputLayout.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        numberInputLayout.setGravity(android.gravity.Gravity.CENTER_VERTICAL);
+
+        android.widget.Button btnDown = new android.widget.Button(this);
+        btnDown.setText("−");
+        btnDown.setTextSize(24);
+        android.widget.LinearLayout.LayoutParams downParams = new android.widget.LinearLayout.LayoutParams(80, 80);
+        downParams.setMargins(0, 0, 16, 0);
+        btnDown.setLayoutParams(downParams);
+        numberInputLayout.addView(btnDown);
+
+        android.widget.EditText numberInput = new android.widget.EditText(this);
+        numberInput.setText(String.valueOf(currentNum));
+        numberInput.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        numberInput.setTextSize(20);
+        numberInput.setTextColor(0xFFFFFFFF);
+        numberInput.setGravity(android.view.Gravity.CENTER);
+        numberInput.setPadding(24, 16, 24, 16);
+        numberInput.setBackgroundColor(0x33FFFFFF);
+        android.widget.LinearLayout.LayoutParams inputParams = new android.widget.LinearLayout.LayoutParams(160, 80);
+        inputParams.setMargins(0, 0, 16, 0);
+        numberInput.setLayoutParams(inputParams);
+        numberInputLayout.addView(numberInput);
+
+        android.widget.Button btnUp = new android.widget.Button(this);
+        btnUp.setText("+");
+        btnUp.setTextSize(24);
+        android.widget.LinearLayout.LayoutParams upParams = new android.widget.LinearLayout.LayoutParams(80, 80);
+        btnUp.setLayoutParams(upParams);
+        numberInputLayout.addView(btnUp);
+
+        dialogLayout.addView(numberInputLayout);
+
+        btnUp.setOnClickListener(v -> {
+            try {
+                int val = Integer.parseInt(numberInput.getText().toString());
+                numberInput.setText(String.valueOf(val + 1));
+            } catch (NumberFormatException e) {
+                numberInput.setText("1");
+            }
+        });
+
+        btnDown.setOnClickListener(v -> {
+            try {
+                int val = Integer.parseInt(numberInput.getText().toString());
+                if (val > 1) {
+                    numberInput.setText(String.valueOf(val - 1));
+                }
+            } catch (NumberFormatException e) {
+                numberInput.setText("1");
+            }
+        });
+
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("调整频道号")
+                .setView(dialogLayout)
+                .setPositiveButton("确定", (dialog, which) -> {
+                    try {
+                        int newNumber = Integer.parseInt(numberInput.getText().toString());
+                        if (newNumber > 0) {
+                            saveCustomChannelNumber(channel.id, newNumber);
+                            channel.displayNumber = newNumber;
+                            channelAdapter.notifyChannelChanged(channel.id);
+                            Toast.makeText(this, "频道号已更新: " + channel.name + " → " + newNumber, Toast.LENGTH_SHORT).show();
+                        }
+                    } catch (NumberFormatException e) {
+                        Toast.makeText(this, "请输入有效的频道号", Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void showMoveToGroupDialog(ChannelOptimized channel) {
+        Map<String, List<Integer>> groups = FavoriteGroupManager.getGroups(this);
+        String[] groupNames = groups.keySet().toArray(new String[0]);
+
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("移动到分组")
+                .setItems(groupNames, (dialog, which) -> {
+                    String groupName = groupNames[which];
+                    FavoriteGroupManager.addChannelToGroup(this, channel.id, groupName);
+                    channel.isFavorite = true;
+                    channelAdapter.notifyChannelChanged(channel.id);
+                    Toast.makeText(this, "已移动到: " + groupName, Toast.LENGTH_SHORT).show();
+                    refreshFavoriteCount();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void showGroupManagementDialog() {
+        Map<String, List<Integer>> groups = FavoriteGroupManager.getGroups(this);
+        String[] groupNames = groups.keySet().toArray(new String[0]);
+
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("分组管理")
+                .setItems(groupNames, (dialog, which) -> {
+                    String groupName = groupNames[which];
+                    showGroupEditDialog(groupName);
+                })
+                .setPositiveButton("新建分组", (dialog, which) -> {
+                    showCreateGroupDialog();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void showGroupEditDialog(String groupName) {
+        String[] options = {"重命名", "删除分组"};
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(groupName)
+                .setItems(options, (dialog, which) -> {
+                    if (which == 0) {
+                        // 重命名
+                        showRenameGroupDialog(groupName);
+                    } else if (which == 1) {
+                        // 删除分组
+                        if (!groupName.equals("默认")) {
+                            FavoriteGroupManager.deleteGroup(this, groupName);
+                            refreshFavoriteCount();
+                            Toast.makeText(this, "已删除分组: " + groupName, Toast.LENGTH_SHORT).show();
+                        } else {
+                            Toast.makeText(this, "默认分组不能删除", Toast.LENGTH_SHORT).show();
+                        }
+                    }
+                })
+                .show();
+    }
+
+    private void showRenameGroupDialog(String oldName) {
+        android.widget.EditText input = new android.widget.EditText(this);
+        input.setText(oldName);
+        input.setSelectAllOnFocus(true);
+
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("重命名分组")
+                .setView(input)
+                .setPositiveButton("确定", (dialog, which) -> {
+                    String newName = input.getText().toString().trim();
+                    if (!newName.isEmpty() && !newName.equals(oldName)) {
+                        FavoriteGroupManager.renameGroup(this, oldName, newName);
+                        refreshFavoriteCount();
+                        Toast.makeText(this, "分组已重命名", Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void showCreateGroupDialog() {
+        android.widget.EditText input = new android.widget.EditText(this);
+        input.setHint("分组名称");
+
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("新建分组")
+                .setView(input)
+                .setPositiveButton("确定", (dialog, which) -> {
+                    String groupName = input.getText().toString().trim();
+                    if (!groupName.isEmpty()) {
+                        FavoriteGroupManager.createGroup(this, groupName);
+                        refreshFavoriteCount();
+                        Toast.makeText(this, "已创建分组: " + groupName, Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
     }
 
     /**
@@ -1620,8 +2074,13 @@ public class MainActivity extends AppCompatActivity {
                 favIds.add(ch.id);
             }
         }
+
+        // 保持向后兼容：旧格式仍然保存（供其他组件可能读取）
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .edit().putString(KEY_FAVORITES, sb.toString()).apply();
+
+        // 新格式：分组数据由 FavoriteGroupManager 管理
+        // 注意：实际的分组数据在 toggleFavorite() 中已经更新，这里只负责云同步
 
         // 云同步：收藏 + 历史 推送到后端
         List<Integer> histIds = new ArrayList<>();
@@ -2257,6 +2716,9 @@ public class MainActivity extends AppCompatActivity {
         // 后台拉取 EPG（优先后端 API，失败则回退本地 XMLTV 缓存）
         executor.execute(() -> {
             List<String[]> programList = fetchEpgPrograms(channel);
+            // 获取当前时间用于判断"正在播放"
+            long currentMillis = System.currentTimeMillis();
+            String currentTimeStr = new java.text.SimpleDateFormat("HH:mm").format(new java.util.Date(currentMillis));
 
             mainHandler.post(() -> {
                 try {
@@ -2268,16 +2730,39 @@ public class MainActivity extends AppCompatActivity {
                     return;
                 }
 
-                // 用 TextView 展示节目列表（简单可靠，避免再建复杂布局）
+                // 构建节目单时间线显示（带当前节目高亮）
                 StringBuilder sb = new StringBuilder();
-                for (String[] p : programList) { // {时间, 节目名}
-                    sb.append(p[0]).append("  ").append(p[1]).append('\n');
+                sb.append("━━━━━━━━━━━━━━━━━━━━━━━━\n");
+                for (int i = 0; i < programList.size(); i++) {
+                    String[] p = programList.get(i);
+                    String time = p[0];
+                    String title = p[1];
+
+                    // 判断是否为当前节目（简单判断：时间在前后 30 分钟内）
+                    boolean isCurrent = Math.abs(time.compareTo(currentTimeStr)) <= 30 ||
+                            (i > 0 && programList.get(i-1)[0].compareTo(currentTimeStr) <= 0 && currentTimeStr.compareTo(time) <= 0);
+
+                    if (isCurrent) {
+                        sb.append("🔵 ").append(time).append("  ").append(title).append("  [正在播放]\n");
+                    } else {
+                        sb.append("    ").append(time).append("  ").append(title).append("\n");
+                    }
+
+                    // 节目间分隔线
+                    if (i < programList.size() - 1) {
+                        sb.append("    ├─ ").append(programList.get(i+1)[0]).append("\n");
+                    }
                 }
+                sb.append("━━━━━━━━━━━━━━━━━━━━━━━━");
 
                 new AlertDialog.Builder(this)
-                        .setTitle(channel.name + " · 节目单")
-                        .setMessage(sb.toString().trim())
+                        .setTitle(channel.name + " · 节目单（今天）")
+                        .setMessage(sb.toString())
                         .setNegativeButton("关闭", null)
+                        .setPositiveButton("切换频道", (d, w) -> {
+                            // 可扩展：点击节目名直接跳转（暂不支持）
+                            Toast.makeText(this, "节目预告功能开发中", Toast.LENGTH_SHORT).show();
+                        })
                         .show();
             });
         });
@@ -2925,14 +3410,12 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     public boolean onKeyLongPress(int keyCode, KeyEvent event) {
-        // 长按 OK/Enter → 收藏/取消收藏
+        // 长按 OK/Enter → 字幕选择
         if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER
                 || keyCode == KeyEvent.KEYCODE_ENTER) {
-            okLongPressed = true;   // 标记已长按，防止 onKeyUp 误触发短按
-            if (currentChannel != null) {
-                toggleFavorite(currentChannel);
-                // 面板可见时同步刷新计数
-                if (panelVisible) refreshCategoryNav();
+            okLongPressed = true;
+            if (player != null && trackSelector != null) {
+                showTrackDialog(true); // true = 字幕
             }
             return true;
         }
