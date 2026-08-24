@@ -79,6 +79,7 @@ class Config:
     ])
 
     # ── Health Check ──────────────────────────────────────
+    scheduler_enabled: bool = os.getenv("TV_SCHEDULER_ENABLED", "true").lower() in ("1", "true", "yes")
     check_interval_minutes: int = int(os.getenv("TV_CHECK_INTERVAL", "15"))
     check_timeout_seconds: int = int(os.getenv("TV_CHECK_TIMEOUT", "10"))
     # Number of consecutive failures before marking a source as dead

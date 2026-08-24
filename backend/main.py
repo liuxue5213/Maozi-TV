@@ -129,9 +129,13 @@ async def lifespan(app: FastAPI):
     """Startup and shutdown handler."""
     logger.info("Starting TV Live Streaming Backend...")
     init_db()
-    scheduler.start()
+    if config.scheduler_enabled:
+        scheduler.start()
+    else:
+        logger.info("Background scheduler disabled")
     yield
-    scheduler.stop()
+    if config.scheduler_enabled:
+        scheduler.stop()
     logger.info("Shutdown complete.")
 
 
@@ -201,7 +205,7 @@ else:
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
-        "main:app",
+        "backend.main:app",
         host=config.host,
         port=config.port,
         log_level=config.log_level.lower(),

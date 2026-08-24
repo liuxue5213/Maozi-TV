@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from .database import Channel, SessionLocal
+from .source_quality import compute_score, get_quality_map
 
 logger = logging.getLogger(__name__)
 
@@ -74,11 +75,30 @@ def export_channels(
 
         channels = query.order_by(Channel.group_name, Channel.name).all()
 
+        raw_channels = [(ch, ch.get_sources()) for ch in channels]
+        quality_map = get_quality_map(db, [url for _, sources in raw_channels for url in sources])
+
         channel_list: List[Dict[str, Any]] = []
         region_counts: Dict[str, int] = {"domestic": 0, "international": 0}
-        for ch in channels:
-            sources = ch.get_sources()
-            active_url = ch.get_active_source()
+        for ch, sources in raw_channels:
+            source_quality = []
+            for idx, url in enumerate(sources):
+                stat = quality_map.get(url)
+                source_quality.append({
+                    "url": url,
+                    "score": compute_score(stat, url),
+                    "rank": idx + 1,
+                    "success_count": stat.success_count if stat else 0,
+                    "failure_count": stat.failure_count if stat else 0,
+                    "playback_failure_count": stat.playback_failure_count if stat else 0,
+                    "avg_response_time": stat.avg_response_time if stat else None,
+                    "last_error": stat.last_error if stat else "",
+                })
+            source_quality.sort(key=lambda item: (-item["score"], item["rank"]))
+            for idx, item in enumerate(source_quality, start=1):
+                item["rank"] = idx
+            sources = [item["url"] for item in source_quality]
+            active_url = sources[0] if sources else ch.get_active_source()
             region = detect_region(ch.group_name, ch.name)
             region_counts[region] = region_counts.get(region, 0) + 1
             channel_list.append({
@@ -88,8 +108,10 @@ def export_channels(
                 "logo": ch.logo or "",
                 "url": active_url or "",
                 "sources": sources,
+                "source_quality": source_quality,
                 "healthy": ch.healthy if ch.visible else False,
                 "region": region,
+                "epg": ch.epg or "",
             })
 
         payload = {

@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>帽子TV 管理后台</title>
+    <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<main class="page">
+    <header class="topbar">
+        <div>
+            <h1>帽子TV 管理后台</h1>
+            <p id="subtitle">源质量、频道状态和更新记录</p>
+        </div>
+        <div class="server-box">
+            <input id="api-base" type="text" placeholder="后端地址">
+            <button id="btn-save-api">连接</button>
+        </div>
+        <div class="actions">
+            <button id="btn-refresh">刷新</button>
+            <button id="btn-crawl">立即爬取</button>
+            <button id="btn-check">健康检查</button>
+        </div>
+    </header>
+
+    <section class="metrics" id="metrics"></section>
+    <section class="notice hidden" id="notice"></section>
+
+    <section class="panel channel-panel">
+        <div class="panel-head">
+            <h2 id="channel-title">频道明细</h2>
+            <div class="channel-tools">
+                <input id="channel-search" type="text" placeholder="搜索频道 / 分组 / 源">
+                <span id="channel-count"></span>
+            </div>
+        </div>
+        <div class="table-wrap channel-table-wrap">
+            <table>
+                <thead>
+                <tr>
+                    <th>频道</th>
+                    <th>分组</th>
+                    <th>区域</th>
+                    <th>状态</th>
+                    <th>源数</th>
+                    <th>最佳评分</th>
+                    <th>当前源</th>
+                </tr>
+                </thead>
+                <tbody id="channel-table"></tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="grid">
+        <div class="panel">
+            <div class="panel-head">
+                <h2>源质量 Top</h2>
+                <span id="quality-count"></span>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                    <tr>
+                        <th>评分</th>
+                        <th>成功/失败</th>
+                        <th>播放失败</th>
+                        <th>平均响应</th>
+                        <th>URL</th>
+                    </tr>
+                    </thead>
+                    <tbody id="quality-table"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-head">
+                <h2>更新差异</h2>
+                <span id="diff-count"></span>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                    <tr>
+                        <th>时间</th>
+                        <th>爬取</th>
+                        <th>新增频道</th>
+                        <th>更新频道</th>
+                        <th>新增源</th>
+                        <th>恢复源</th>
+                    </tr>
+                    </thead>
+                    <tbody id="diff-table"></tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+</main>
+<div class="toast" id="toast"></div>
+<script src="admin.js"></script>
+</body>
+</html>

@@ -91,6 +91,37 @@ public class CloudSync {
         });
     }
 
+    public static void reportPlaybackFailure(final Context context, final Integer channelId,
+                                             final String sourceUrl, final String error) {
+        if (sourceUrl == null || sourceUrl.isEmpty()) return;
+        NET_EXECUTOR.execute(() -> {
+            try {
+                JSONObject body = new JSONObject();
+                body.put("channel_id", channelId != null ? channelId : JSONObject.NULL);
+                body.put("source_url", sourceUrl);
+                body.put("error", error != null ? error : "");
+                body.put("client_id", getClientId(context));
+
+                String url = getServerUrl(context) + "/api/sources/playback-failure";
+                HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+                conn.setRequestMethod("POST");
+                conn.setConnectTimeout(3000);
+                conn.setReadTimeout(3000);
+                conn.setRequestProperty("Content-Type", "application/json");
+                conn.setDoOutput(true);
+
+                OutputStream os = conn.getOutputStream();
+                os.write(body.toString().getBytes(StandardCharsets.UTF_8));
+                os.flush();
+                os.close();
+                conn.getResponseCode();
+                conn.disconnect();
+            } catch (Exception ignored) {
+                // 后端不可用时不影响播放换源
+            }
+        });
+    }
+
     // ── 云同步：保存 ──────────────────────────────────────
     public static void save(final Context context, final List<Integer> favorites,
                             final List<Integer> history) {

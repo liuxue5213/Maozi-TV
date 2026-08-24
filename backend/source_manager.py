@@ -4,6 +4,7 @@ This is the core module that ensures channels always have working sources.
 """
 
 import concurrent.futures
+import json
 import logging
 import threading
 import time
@@ -16,8 +17,9 @@ import requests
 from sqlalchemy import desc, func
 
 from .config import config
-from .database import Channel, SessionLocal, SourceCheckLog
+from .database import Channel, SessionLocal, SourceCheckLog, SourceDiffLog
 from .checker import check_source, check_source_codec
+from .source_quality import record_check_result, rank_sources
 
 from .crawlers.base import ChannelEntry
 from .crawlers.github_crawler import GitHubM3uCrawler
@@ -102,7 +104,7 @@ class SourceManager:
         new_count = 0
         summary["crawled"] = len(entries)
         if entries:
-            new_count = self._merge_into_db(entries)
+            new_count = self._merge_into_db(entries, crawled_entries=len(entries))
             summary["new_channels"] = new_count
         logger.info("Crawl complete: %d entries, %d new channels", len(entries), new_count)
 
@@ -211,7 +213,7 @@ class SourceManager:
             db.commit()
             return ch
 
-    def _merge_into_db(self, entries: List[ChannelEntry]) -> int:
+    def _merge_into_db(self, entries: List[ChannelEntry], crawled_entries: int = 0) -> int:
         """Merge crawled entries into the database.
 
         Strategy:
@@ -244,6 +246,9 @@ class SourceManager:
             }
 
             new_count = 0
+            updated_count = 0
+            added_sources_count = 0
+            recovered_sources_count = 0
             for key, group_entries in groups.items():
                 # Use the first entry's group/logo as the primary, and pick a
                 # tidy display name (canonical alias where known).
@@ -269,6 +274,7 @@ class SourceManager:
                         existing.set_dead_sources(new_dead)
                         logger.info("Recovered %d previously dead sources for '%s'",
                                     len(recovered), existing.name)
+                        recovered_sources_count += len(recovered)
 
                     # Add new sources not already in active or dead list
                     added = [u for u in urls if u not in existing_urls and u not in dead_urls]
@@ -277,8 +283,11 @@ class SourceManager:
                         merged = current_sources + added + recovered
                         if len(merged) > config.max_sources_per_channel:
                             merged = merged[:config.max_sources_per_channel]
+                        merged, _ = rank_sources(db, merged)
                         existing.set_sources(merged)
                         existing.updated_at = datetime.now(timezone.utc)
+                        updated_count += 1
+                        added_sources_count += len(added)
                         # If channel was hidden and we found new sources, unhide it
                         if not existing.visible and (added or recovered):
                             existing.visible = True
@@ -300,7 +309,8 @@ class SourceManager:
                         logo=primary.logo or "",
                     )
                     # Keep at most max_sources_per_channel sources
-                    new_ch.set_sources(urls[:config.max_sources_per_channel])
+                    ranked_urls, _ = rank_sources(db, urls[:config.max_sources_per_channel])
+                    new_ch.set_sources(ranked_urls)
                     db.add(new_ch)
                     # Register in the map so duplicate keys in the same batch
                     # don't create a second row.
@@ -309,6 +319,14 @@ class SourceManager:
                     logger.info("Created new channel '%s' with %d sources",
                                  display, len(urls[:config.max_sources_per_channel]))
 
+            db.commit()
+            db.add(SourceDiffLog(
+                new_channels=new_count,
+                updated_channels=updated_count,
+                added_sources=added_sources_count,
+                recovered_sources=recovered_sources_count,
+                crawled_entries=crawled_entries,
+            ))
             db.commit()
 
             return new_count
@@ -352,6 +370,7 @@ class SourceManager:
             error_message=error[:200] if error else "",
         )
         db.add(check_log)
+        record_check_result(db, active_url, is_healthy, resp_time, status_code, error)
 
         ch.last_checked = datetime.now(timezone.utc)
 
@@ -384,6 +403,7 @@ class SourceManager:
             is_healthy, resp_time, _, _ = check_source(
                 test_url, timeout=config.check_timeout_seconds
             )
+            record_check_result(db, test_url, is_healthy, resp_time)
 
             if is_healthy:
                 ch.active_source_index = test_idx

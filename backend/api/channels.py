@@ -2,8 +2,10 @@
 
 import logging
 import re
+import threading
 import time
 from typing import Dict, List, Optional, Tuple
+from uuid import uuid4
 from urllib.parse import quote, urljoin
 
 import requests
@@ -11,10 +13,11 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
-from ..database import Channel, SessionLocal, SourceCheckLog
+from ..database import Channel, SessionLocal, SourceCheckLog, SourceDiffLog, SourceQualityStats
 from ..source_manager import SourceManager
 from ..exporter import export_channels, detect_region
 from ..epg import get_epg
+from ..source_quality import compute_score, get_quality_map, record_playback_failure
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +26,66 @@ source_manager = SourceManager()
 
 # Logo 内存缓存（减少重复请求，TTL=1小时）
 _logo_cache: Dict[str, Tuple[bytes, str, float]] = {}
+_jobs: Dict[str, dict] = {}
+_jobs_lock = threading.Lock()
+_maintenance_lock = threading.Lock()
+
+
+def _set_job(job_id: str, **updates):
+    with _jobs_lock:
+        job = _jobs.setdefault(job_id, {})
+        job.update(updates)
+
+
+def _start_maintenance_job(kind: str, target):
+    job_id = str(uuid4())
+    _set_job(job_id, id=job_id, kind=kind, status="queued", created_at=time.time())
+
+    def _run():
+        if not _maintenance_lock.acquire(blocking=False):
+            _set_job(job_id, status="rejected", error="another maintenance job is running", finished_at=time.time())
+            return
+        try:
+            _set_job(job_id, status="running", started_at=time.time())
+            result = target()
+            _set_job(job_id, status="completed", result=result, finished_at=time.time())
+        except Exception as e:
+            logger.error("Maintenance job %s failed: %s", job_id, e, exc_info=True)
+            _set_job(job_id, status="failed", error=str(e), finished_at=time.time())
+        finally:
+            _maintenance_lock.release()
+
+    threading.Thread(target=_run, daemon=True).start()
+    return _jobs[job_id]
+
+
+def _apply_quality(ch_dict: dict, quality_map: Dict[str, SourceQualityStats]) -> dict:
+    sources = ch_dict.get("sources") or []
+    active_url = ch_dict.get("url")
+    details = []
+    for idx, url in enumerate(sources):
+        stat = quality_map.get(url)
+        details.append({
+            "url": url,
+            "score": compute_score(stat, url),
+            "rank": idx + 1,
+            "success_count": stat.success_count if stat else 0,
+            "failure_count": stat.failure_count if stat else 0,
+            "playback_failure_count": stat.playback_failure_count if stat else 0,
+            "avg_response_time": stat.avg_response_time if stat else None,
+            "last_error": stat.last_error if stat else "",
+        })
+    details.sort(key=lambda item: (-item["score"], item["rank"]))
+    for idx, item in enumerate(details, start=1):
+        item["rank"] = idx
+    ranked_sources = [item["url"] for item in details]
+    ch_dict["sources"] = ranked_sources
+    ch_dict["source_quality"] = details
+    if ranked_sources:
+        selected_url = active_url if active_url in ranked_sources else ranked_sources[0]
+        ch_dict["url"] = selected_url
+        ch_dict["active_source_index"] = ranked_sources.index(selected_url)
+    return ch_dict
 
 
 # ── Pydantic Schemas ──────────────────────────────────────────
@@ -34,6 +97,7 @@ class ChannelOut(BaseModel):
     logo: str
     url: Optional[str] = None
     sources: List[str]
+    source_quality: List[dict] = []
     active_source_index: int
     healthy: bool
     last_response_time: Optional[float] = None
@@ -57,6 +121,13 @@ class SummaryOut(BaseModel):
     last_cycle: Optional[str] = None
 
 
+class PlaybackFailureIn(BaseModel):
+    channel_id: Optional[int] = None
+    source_url: str
+    error: str = ""
+    client_id: str = ""
+
+
 # ── Endpoints ─────────────────────────────────────────────────
 
 @router.get("/channels", response_model=List[ChannelOut])
@@ -78,7 +149,11 @@ def list_channels(
             query = query.filter(Channel.group_name == group)
 
         channels = query.order_by(Channel.group_name, Channel.name).all()
-        result = [ch.to_dict() for ch in channels]
+        urls = []
+        for ch in channels:
+            urls.extend(ch.get_sources())
+        quality_map = get_quality_map(db, urls)
+        result = [_apply_quality(ch.to_dict(), quality_map) for ch in channels]
         if region:
             result = [ch for ch in result if ch.get("region") == region]
         # 国内优先排序：domestic(0) < international(1)，同类按 group + name
@@ -166,7 +241,8 @@ def get_channel(channel_id: int):
         ch = db.query(Channel).filter(Channel.id == channel_id).first()
         if not ch:
             raise HTTPException(status_code=404, detail="Channel not found")
-        return ch.to_dict()
+        quality_map = get_quality_map(db, ch.get_sources())
+        return _apply_quality(ch.to_dict(), quality_map)
     finally:
         db.close()
 
@@ -204,20 +280,26 @@ def check_single_channel(channel_id: int):
 @router.post("/crawl")
 def trigger_crawl():
     """Manually trigger a full crawl cycle."""
-    summary = source_manager.run_full_cycle()
-    return {"status": "completed", "summary": summary}
+    return _start_maintenance_job("crawl", source_manager.run_full_cycle)
 
 
 @router.post("/check-all")
 def trigger_check_all():
     """Manually trigger health check on all channels."""
-    checked, replaced, hidden = source_manager.check_and_replace_all()
-    return {
-        "status": "completed",
-        "checked": checked,
-        "replaced": replaced,
-        "hidden": hidden,
-    }
+    def _check():
+        checked, replaced, hidden = source_manager.check_and_replace_all()
+        return {"checked": checked, "replaced": replaced, "hidden": hidden}
+
+    return _start_maintenance_job("check-all", _check)
+
+
+@router.get("/jobs/{job_id}")
+def get_job(job_id: str):
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return dict(job)
 
 
 @router.get("/summary", response_model=SummaryOut)
@@ -260,6 +342,84 @@ def export_channel_data():
     """Export all visible channels as a static JSON file (for standalone APK use)."""
     data = export_channels()
     return data
+
+
+@router.post("/sources/playback-failure")
+def report_playback_failure(data: PlaybackFailureIn):
+    """Record a real client playback failure and lower that source's score."""
+    if not data.source_url:
+        raise HTTPException(status_code=400, detail="source_url required")
+    db = SessionLocal()
+    try:
+        query = db.query(Channel).filter(Channel.sources.contains(data.source_url))
+        if data.channel_id is not None:
+            query = query.filter(Channel.id == data.channel_id)
+        if not query.first():
+            raise HTTPException(status_code=400, detail="source_url is not a known channel source")
+
+        stat = record_playback_failure(db, data.source_url, data.error)
+        if data.channel_id:
+            db.add(SourceCheckLog(
+                channel_id=data.channel_id,
+                source_index=-1,
+                source_url=data.source_url,
+                healthy=False,
+                error_message=("client: " + (data.error or ""))[:200],
+            ))
+        db.commit()
+        return {"status": "ok", "score": stat.score}
+    finally:
+        db.close()
+
+
+@router.get("/sources/quality")
+def list_source_quality(limit: int = 100):
+    """List source quality records sorted by score."""
+    db = SessionLocal()
+    try:
+        rows = db.query(SourceQualityStats) \
+            .order_by(SourceQualityStats.score.desc()) \
+            .limit(max(1, min(limit, 500))) \
+            .all()
+        return [
+            {
+                "url": r.source_url,
+                "score": round(r.score or 0, 1),
+                "success_count": r.success_count,
+                "failure_count": r.failure_count,
+                "playback_failure_count": r.playback_failure_count,
+                "avg_response_time": r.avg_response_time,
+                "last_error": r.last_error,
+                "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+            }
+            for r in rows
+        ]
+    finally:
+        db.close()
+
+
+@router.get("/diff-log")
+def list_diff_log(limit: int = 20):
+    """Return recent crawl merge summaries."""
+    db = SessionLocal()
+    try:
+        rows = db.query(SourceDiffLog) \
+            .order_by(SourceDiffLog.created_at.desc()) \
+            .limit(max(1, min(limit, 100))) \
+            .all()
+        return [
+            {
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "crawled_entries": r.crawled_entries,
+                "new_channels": r.new_channels,
+                "updated_channels": r.updated_channels,
+                "added_sources": r.added_sources,
+                "recovered_sources": r.recovered_sources,
+            }
+            for r in rows
+        ]
+    finally:
+        db.close()
 
 
 @router.post("/purge")

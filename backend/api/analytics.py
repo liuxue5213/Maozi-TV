@@ -36,7 +36,10 @@ class EventIn(BaseModel):
 def post_event(event: EventIn):
     """Record a client telemetry event and update play stats."""
     # 校验事件类型，防止垃圾数据刷库
-    allowed = {"app_start", "play_channel", "fav", "unfav", "crash", "settings", "search"}
+    allowed = {
+        "app_start", "play_channel", "fav", "unfav", "crash", "settings",
+        "search", "feedback", "playback_error",
+    }
     if event.event_type not in allowed:
         raise HTTPException(status_code=400, detail=f"unknown event_type: {event.event_type}")
 

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from sqlalchemy import (
-    Column, DateTime, Float, Integer, String, Text, create_engine, JSON, Boolean
+    Boolean, Column, DateTime, Float, Integer, String, Text, create_engine, event, inspect, text
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -16,9 +16,20 @@ logger = logging.getLogger(__name__)
 
 engine = create_engine(
     f"sqlite:///{config.db_path}",
-    connect_args={"check_same_thread": False},
+    connect_args={"check_same_thread": False, "timeout": 60},
+    pool_size=30,
+    max_overflow=30,
+    pool_timeout=60,
     echo=False,
 )
+
+
+@event.listens_for(engine, "connect")
+def _set_sqlite_pragmas(dbapi_connection, _connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA busy_timeout=60000")
+    cursor.close()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -95,13 +106,14 @@ class Channel(Base):
 
     def to_dict(self) -> Dict:
         from .exporter import detect_region
+        sources = self.get_sources()
         return {
             "id": self.id,
             "name": self.name,
             "group": self.group_name,
             "logo": self.logo,
             "url": self.get_active_source(),
-            "sources": self.get_sources(),
+            "sources": sources,
             "active_source_index": self.active_source_index,
             "healthy": self.healthy,
             "last_response_time": self.last_response_time,
@@ -153,10 +165,64 @@ class ChannelPlayStats(Base):
     last_played_at = Column(DateTime, nullable=True)
 
 
+class SourceQualityStats(Base):
+    """Long-lived quality score for a concrete stream URL."""
+
+    __tablename__ = "source_quality_stats"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source_url = Column(String(1024), nullable=False, unique=True, index=True)
+    score = Column(Float, default=50.0)
+    success_count = Column(Integer, default=0)
+    failure_count = Column(Integer, default=0)
+    playback_failure_count = Column(Integer, default=0)
+    avg_response_time = Column(Float, nullable=True)
+    last_status_code = Column(Integer, nullable=True)
+    last_error = Column(String(512), default="")
+    last_checked_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))
+
+
+class SourceDiffLog(Base):
+    """Summary of source changes detected during a crawl merge."""
+
+    __tablename__ = "source_diff_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    new_channels = Column(Integer, default=0)
+    updated_channels = Column(Integer, default=0)
+    added_sources = Column(Integer, default=0)
+    recovered_sources = Column(Integer, default=0)
+    crawled_entries = Column(Integer, default=0)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+
 def init_db():
     """Create all tables."""
     Base.metadata.create_all(bind=engine)
+    _migrate_sqlite_schema()
     logger.info("Database initialized at %s", config.db_path)
+
+
+def _migrate_sqlite_schema():
+    """Apply small additive migrations for existing SQLite databases."""
+    inspector = inspect(engine)
+    if "channels" not in inspector.get_table_names():
+        return
+
+    channel_columns = {col["name"] for col in inspector.get_columns("channels")}
+    migrations = []
+    if "epg" not in channel_columns:
+        migrations.append("ALTER TABLE channels ADD COLUMN epg VARCHAR(128) DEFAULT ''")
+
+    if not migrations:
+        return
+
+    with engine.begin() as conn:
+        for statement in migrations:
+            conn.execute(text(statement))
+            logger.info("Applied database migration: %s", statement)
 
 
 def get_db():

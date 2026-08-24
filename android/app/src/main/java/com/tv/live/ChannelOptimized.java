@@ -75,6 +75,18 @@ public class ChannelOptimized {
             }
         }
 
+        JSONArray qualityArr = obj.optJSONArray("source_quality");
+        if (qualityArr != null) {
+            for (int i = 0; i < qualityArr.length(); i++) {
+                JSONObject sq = qualityArr.optJSONObject(i);
+                if (sq == null) continue;
+                String src = sq.optString("url", "");
+                if (!src.isEmpty()) {
+                    ch.sourceQualities.add(new SourceQuality(src, (int) Math.round(sq.optDouble("score", 0))));
+                }
+            }
+        }
+
         // 确保 url 和 sources 一致
         if (ch.sources.isEmpty() && !ch.url.isEmpty()) {
             ch.sources.add(ch.url);
@@ -83,7 +95,7 @@ public class ChannelOptimized {
             ch.url = ch.sources.get(0);
         }
 
-        // 🔥 核心：智能排序源
+        // 核心：优先使用后端长期质量评分；没有评分时使用本地启发式排序
         ch.optimizeSourceOrder();
 
         return ch;
@@ -102,10 +114,29 @@ public class ChannelOptimized {
     private void optimizeSourceOrder() {
         if (sources.isEmpty()) return;
 
+        List<SourceQuality> backendQualities = new ArrayList<>(sourceQualities);
         sourceQualities.clear();
-        for (String src : sources) {
-            int score = calculateSourceScore(src);
-            sourceQualities.add(new SourceQuality(src, score));
+        if (!backendQualities.isEmpty()) {
+            for (SourceQuality sq : backendQualities) {
+                if (sources.contains(sq.url)) {
+                    sourceQualities.add(sq);
+                }
+            }
+            for (String src : sources) {
+                boolean exists = false;
+                for (SourceQuality sq : sourceQualities) {
+                    if (sq.url.equals(src)) {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (!exists) sourceQualities.add(new SourceQuality(src, calculateSourceScore(src)));
+            }
+        } else {
+            for (String src : sources) {
+                int score = calculateSourceScore(src);
+                sourceQualities.add(new SourceQuality(src, score));
+            }
         }
 
         // 按评分降序排序
@@ -213,6 +244,11 @@ public class ChannelOptimized {
     public int getCurrentSourceScore() {
         if (currentSourceIndex >= sourceQualities.size()) return 0;
         return sourceQualities.get(currentSourceIndex).score;
+    }
+
+    public int getSourceScore(int index) {
+        if (index < 0 || index >= sourceQualities.size()) return 0;
+        return sourceQualities.get(index).score;
     }
 
     /**

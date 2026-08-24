@@ -159,6 +159,7 @@ public class MainActivity extends AppCompatActivity {
     private static final int RESIZE_MODE_4_3 = 4;       // 强制 4:3
     private static final String[] RESIZE_MODE_LABELS = {"自适应", "裁剪填充", "缩放拉伸", "16:9", "4:3"};
     private static final String PREF_CHANNEL_RESIZE_MODES = "channel_resize_modes";
+    private static final String PREF_CHANNEL_SOURCE_PREFS = "channel_source_prefs";
 
     // ── 手势控制 ───────────────────────────────────────────
     private GestureDetector gestureDetector;
@@ -870,7 +871,7 @@ public class MainActivity extends AppCompatActivity {
                 @Override
                 public void onPlayerError(@NonNull PlaybackException error) {
                     Log.e(TAG, "播放错误: " + error.getMessage());
-                    handlePlaybackError();
+                    handlePlaybackError(error);
                 }
             });
 
@@ -888,11 +889,16 @@ public class MainActivity extends AppCompatActivity {
     /**
      * 播放失败处理：自动切换下一个源
      */
-    private void handlePlaybackError() {
+    private void handlePlaybackError(PlaybackException error) {
         if (currentChannel == null) {
             showStatus("播放失败");
             return;
         }
+
+        String failedUrl = currentChannel.getCurrentSourceUrl();
+        String errorMsg = error != null ? error.getErrorCodeName() + ": " + error.getMessage() : "unknown";
+        CloudSync.reportPlaybackFailure(this, currentChannel.id, failedUrl, errorMsg);
+        CloudSync.track(this, "playback_error", currentChannel.id, currentChannel.name, errorMsg);
 
         // 检查是否启用自动切源
         boolean autoSwitch = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
@@ -954,6 +960,7 @@ public class MainActivity extends AppCompatActivity {
         currentChannel = channel;
         retryCount = 0;
         channel.currentSourceIndex = 0;
+        applyPreferredSource(channel);
         // 切台时重置测速器，避免旧频道数据污染新频道显示
         if (speedMeter != null) speedMeter.reset();
         playUrl(channel.getCurrentSourceUrl());
@@ -1041,6 +1048,31 @@ public class MainActivity extends AppCompatActivity {
             e.printStackTrace();
         }
         return null;
+    }
+
+    private void savePreferredSource(int channelId, String sourceUrl) {
+        if (sourceUrl == null || sourceUrl.isEmpty()) return;
+        try {
+            SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+            JSONObject obj = new JSONObject(prefs.getString(PREF_CHANNEL_SOURCE_PREFS, "{}"));
+            obj.put(String.valueOf(channelId), sourceUrl);
+            prefs.edit().putString(PREF_CHANNEL_SOURCE_PREFS, obj.toString()).apply();
+        } catch (Exception ignored) {}
+    }
+
+    private void applyPreferredSource(ChannelOptimized channel) {
+        try {
+            SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+            JSONObject obj = new JSONObject(prefs.getString(PREF_CHANNEL_SOURCE_PREFS, "{}"));
+            String preferred = obj.optString(String.valueOf(channel.id), "");
+            if (preferred.isEmpty()) return;
+            for (int i = 0; i < channel.sources.size(); i++) {
+                if (preferred.equals(channel.sources.get(i))) {
+                    channel.currentSourceIndex = i;
+                    return;
+                }
+            }
+        } catch (Exception ignored) {}
     }
 
     // ══════════════════════════════════════════════════════════
@@ -2146,12 +2178,17 @@ public class MainActivity extends AppCompatActivity {
             }
             String marker = (i == currentChannel.currentSourceIndex) ? " ▶ " : "   ";
             items[i] = marker + "源" + (i + 1) + ": " + url;
+            int score = currentChannel.getSourceScore(i);
+            if (score > 0) {
+                items[i] = marker + "源" + (i + 1) + " 评分" + score + ": " + url;
+            }
         }
 
         new AlertDialog.Builder(this)
                 .setTitle("切换播放源 — " + currentChannel.name)
                 .setItems(items, (dialog, which) -> {
                     currentChannel.currentSourceIndex = which;
+                    savePreferredSource(currentChannel.id, currentChannel.getCurrentSourceUrl());
                     retryCount = 0;
                     playUrl(currentChannel.getCurrentSourceUrl());
                     Toast.makeText(this, "已切换到源 " + (which + 1), Toast.LENGTH_SHORT).show();
